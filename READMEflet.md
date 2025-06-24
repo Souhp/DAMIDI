@@ -1,10 +1,15 @@
+<<<<<<< HEAD
+# DAMIDI
+=======
 # Midireader app
 
 ## Run the app
 
 ### uv
 
-Run as a desktop app:
+Run as a desktop appam cum:
+
+am cum
 
 ```
 uv run flet run
@@ -79,3 +84,4 @@ flet build windows -v
 ```
 
 For more details on building Windows package, refer to the [Windows Packaging Guide](https://flet.dev/docs/publish/windows/).
+>>>>>>> 1f70197 (Initial commit)

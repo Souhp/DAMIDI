@@ -28,7 +28,11 @@ class App_Inst(Default_Page):
 		self.cd = chord_display()
 		self.id=interval_display()
 		self.piano = visual_piano()
-		self.staff = staff(300,120,24,4,False)
+		self.staff = staff(300,120,40,30,False,False)
+		self.name = "chordID"
+
+		##WARINING
+		self.widgets=[self.cd,self.id,self.piano,self.staff]
 
 		#self.side_menu.items=[]
 
@@ -69,6 +73,16 @@ class App_Inst(Default_Page):
 				]
 
 			)
+
+		self.sidebar.content.controls.append(self.staff.sidebar_content)
+
+
+
+
+
+
+
+
 
 		#self.All_Content.update()
  

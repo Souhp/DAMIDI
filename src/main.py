@@ -24,7 +24,7 @@ async def main(page: ft.Page):
 
     
     async def total_update(*args,**kwargs):
-        page.update() 
+        #initialized_class.All_Content.update() 
         print("tu")
         page.update()
 
@@ -79,7 +79,7 @@ async def main(page: ft.Page):
         print("ChangePAGESOFT")
 
         await initialized_class.async_init(midi_input=Midi_Name)
-
+        await all_size_update()
 
 
 
@@ -90,8 +90,13 @@ async def main(page: ft.Page):
         
 
 
+    async def change_scale(x):
+        initialized_class.scale_update(x)
 
 
+    async def all_size_update(*args):
+        #print(f"broadcasting page width of {page.height}")
+        await initialized_class.size_update({"x":page.width,"y":page.height})
 
 
     ##Sets the page to the main page by default
@@ -104,11 +109,17 @@ async def main(page: ft.Page):
     await register_event("change_midi",Change_Midi)
     await register_event("change_page_soft",Change_Page_Soft)
     await register_event("total_update",total_update)
+    await register_event("change_scale",change_scale)
+    await register_event("size_update",all_size_update)
 
     page.controls.append(currentPage.content)
     #alignment=ft.MainAxisAlignment.CENTER,
     page.horizontal_alignment = ft.MainAxisAlignment.CENTER
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
+
+
+
+    page.on_resized=all_size_update
 
     page.update()
 

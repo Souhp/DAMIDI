@@ -14,6 +14,7 @@ class settings(Default_Page):
 
     def get_ports(e):
         ports = []
+        print("aaa")
         for port in mido.get_input_names():
             port_inst = "{}".format(port)
             ports.append(ft.dropdown.Option(key=(port_inst)))
@@ -23,7 +24,7 @@ class settings(Default_Page):
 
 
     async def trigger_midi_change(self, e: ft.ControlEvent):
-        await trigger_event("change_midi", e.control.value)
+        await trigger_event("change_midi", e.control.values                                                                                                                                                                                     )
 
 
     ####THIS IS FUCKED, AS A CLASS FOR SOME REASON THE BUTTON PRESS ALSO REVIEVES (X) A BUNCH OF EXTRA INFO, 
@@ -54,6 +55,13 @@ class settings(Default_Page):
             )
 
 
+        self.dropdown=ft.Dropdown(
+
+
+            options=self.get_ports(),
+            text_size=17,
+            on_change=self.trigger_midi_change,
+            )
 
 
 
@@ -84,12 +92,12 @@ class settings(Default_Page):
             
             
             
-                        ft.Dropdown(
+                        self.dropdown,
 
 
-                            options=self.get_ports(),
-                            text_size=17,
-                            on_change=self.trigger_midi_change,
+                        ft.FloatingActionButton(
+                            icon=ft.Icons.REFRESH,
+                            on_click=lambda e:self.dropdown.update
                             )
                      
                         ]

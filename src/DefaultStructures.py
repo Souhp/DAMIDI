@@ -1,12 +1,31 @@
 import flet as ft
-from Event_Dispatch_Bus import trigger_event
+from Event_Dispatch_Bus import trigger_event, register_event
 import PageMemory
-from midiFuncs import midi_listener,midi_to_note,strip_octave
+from midiFuncs import midi_listener,midi_to_note,strip_octave,get_note_verisons
 import asyncio
 from mingus.core import notes, chords
 from pychord import find_chords_from_notes, Chord, notes_to_positions
 import flet.canvas as cv
-from typing import List
+#from typing import List
+from pychord.constants import all_scales
+from collections import namedtuple
+default_scale={"C":  ["C", "D", "E", "F", "G", "A", "B"]}
+import math
+
+
+
+class SizeAwareControl(cv.Canvas):
+	def __init__(self, content=None, resize_interval=100, on_resize=None, **kwargs):
+		super().__init__(**kwargs)
+		self.content = content
+		self.resize_interval = resize_interval
+		self.resize_callback = on_resize
+
+		self.size = namedtuple("size", field_names=["width", "height"], defaults=[0, 0])
+		# self.on_resize = self.__handle_canvas_resize
+
+
+
 class SearchField:
 	def __init__(self,align: ft.MainAxisAlignment):
 
@@ -16,15 +35,42 @@ class SearchField:
 
 			controls=[SearchField.TextInput,SearchField.SearchButton],
 			alignment=align,
-
 			)
+
+
+class Default_Widget():
+
+	def __init__(self):
+
+		self.sidebar_content=ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+		self.scale=default_scale["C"]
+		#scale name always for major
+		self.scale_name = "C"
+		self.page_size = {"x":1600,"y":400}
+
+	def resize(self):
+		print("timetoresize")
+
+	def midi_to_scale_note(self,pitch):
+
+		note_names = all_scales.chromatic_major_scales[self.scale_name]
+		if 0 <= pitch <= 127:
+			note = note_names[pitch % 12]
+			octave = (pitch // 12) - 1
+			return f"{note}{octave}"
+		else:
+			raise ValueError("MIDI pitch must be between 0 and 127")
+
+
+
 
 
 
 class Default_Page():
 
 	####ALLL VISUALS DONE HERE
-	
+
+
 	async def note_update(e,self):
 
 
@@ -101,7 +147,6 @@ class Default_Page():
 		self.tick_time = tick_time
 		self.ml = midi_listener(midi_input)
 
-
 		if midi_input==None:
 			raise ValueError("GAY No MIDI INPUT")
 
@@ -120,10 +165,16 @@ class Default_Page():
 
 	def __init__(self):
 
+		self.scale="CMajor"
 		self.ml = None
 		self.listener=None
 		self.sidebar = Sidebar()
 		self.sidebar.visible=False
+		self.name = "DefPage"
+
+
+		##WARNING THIS MUST BE FILLED SO THAT MY FUNCTIONS CAN AUTO UPDATE SCALE ON SCALE CHANGE IN SETTINGS DROPDOWN!## ^_^
+		self.widgets=[]
 
 		self.Back_Button = ft.FloatingActionButton( 
 	
@@ -184,10 +235,32 @@ class Default_Page():
 
 			)
 
+	##update new scale scale
+	def scale_update(self,x):
+		print("starting scale update")
+		self.scale=x
+		nl=[]
+		if x.endswith("Major"):
+			y = x[:-5]  # remove the last 5 characters ("Major")
+		else:
+			raise ValueError("line 235 default strctures does not start with major fuc  fuckf cufkc fuck aaa")
+		for i in self.widgets:
+			i.scale_name = y
+			print(f"NEW SCALE NAME:{y}")
+			i.scale=all_scales.major_scales[y]
+
+	async def size_update(self,cords: dict):
+		for i in self.widgets:
+			print(str(cords))
+			i.page_size=cords
+			await i.resize()
 
 
-class chord_display:
+
+
+class chord_display(Default_Widget):
 	def __init__(self):
+		super().__init__()
 		self.current_root = None
 		self.current_chord = None
 		self.nlo_c = []
@@ -284,8 +357,9 @@ class chord_display:
 
 
 
-class interval_display:
+class interval_display(Default_Widget):
 	def __init__(self):
+		super().__init__()
 		self.current_root = None
 		self.current_chord = None
 		self.nlo_c = []
@@ -366,8 +440,9 @@ class interval_display:
 
 
 
-class visual_piano:
+class visual_piano(Default_Widget):
 	def __init__(self, num_keys=88):
+		super().__init__()
 		self.num_keys = num_keys
 		self.key_map = {}
 		self.current_chord = ''
@@ -483,149 +558,707 @@ class visual_piano:
 		for note in nlo:
 
 			self.key_map[note].bgcolor=ft.Colors.BLUE
-			
 
-class staff():
-	def __init__(self, width=1200, height=120, line_spacing=24,stroke_width=6,show_bass=True):
+		
+
+
+
+		#SIDEBAR OPTIONS##
+		#self.sidebar_content.controls.append(self.staff.sidebar_content)
+
+class staff(Default_Widget):
+
+
+
+
+
+
+	def change_octave_field(self,x,y,z,param):
+		print("ss")
+		if param=="up":
+			self.note_range[0]=y.value
+			x.value=int(y.value)+(4 if self.show_bass ==True else 2)
+			self.note_range[1]=x.value
+
+		else:
+			self.note_range[1]=y.value
+			x.value=int(y.value)-(4 if self.show_bass ==True else 2)
+			self.note_range[0]=x.value
+
+		self.sidebar_content.update()
+
+
+		##this is how everything is mapped##
+		self.set_note_dic()
+
+
+
+
+	def __init__(self, width_scale=1, height_scale=1,stroke_width=30,show_bass=True,show_line=True):
 		super().__init__()
-		self.width = width
-		self.height = height
-		self.line_spacing = line_spacing
-		self.num_lines = 5
-		self.left_margin = 20
-		self.right_margin = 20
-		self.top_margin = 20
+
+		
+		self.canvas = cv.Canvas()
 		self.show_bass=show_bass
+		self.note_dic={}
+		
+		
+		
+
+
+
+
+
+
+
+
+
+		if show_bass==True:
+			self.num_lines = 11
+			self.note_range= [2,6]
+		else:
+			self.note_range= [4,6]
+			self.num_lines = 5
+
+		self.set_note_dic()
+
+
+
+
+		self.width_scale = width_scale
+		self.height_scale = height_scale
+
+
+		self.width = self.page_size["x"]*self.width_scale
+		self.height = (self.page_size["y"]/1.3)*self.height_scale
+		#self.width = 1600
+		#self.height = 400	
+		self.line_spacing = self.height/self.num_lines
+		self.top_margin=self.height*0.18
+		self.left_margin = self.width*0.18
+		self.right_margin = self.width*0.18
+
+
+		self.show_line=show_line
+
 
 		self.Wbody = ft.Container(
-			#bgcolor=ft.Colors.AMBER_500,
+			bgcolor=ft.Colors.AMBER_500,
 			alignment=ft.alignment.center,
+			#on_resized=lambda: print("resized"),
 			#expand=True,
 		)
-		semi_transparent_paint = ft.Paint(
+		self.semi_transparent_paint = ft.Paint(
 			style=ft.PaintingStyle.FILL,
 			color="#8C008DFF",  # full hex with alpha
-			stroke_width=8
+			stroke_width=11
 		)
-		stroke_paint = ft.Paint(
+		self.stroke_paint = ft.Paint(
 			stroke_width=6,
 			style=ft.PaintingStyle.STROKE,
 			color=ft.Colors.BLACK
 		)
 
 		# Generate the staff lines
-		staff_lines = []
+		self.staff_lines = []
+		l_count = 0
 		for i in range(self.num_lines):
-			y = self.top_margin + i * self.line_spacing
-			staff_lines.append(cv.Line(
-				self.left_margin, y,
-				self.width - self.right_margin, y,
-				paint=stroke_paint
+			l_count+= 1
+			if l_count != 6:
+
+				y = self.top_margin + i * self.line_spacing
+				self.staff_lines.append(cv.Line(
+					self.left_margin, y,
+					self.width - self.right_margin, y,
+					paint=self.stroke_paint
 			))
 
 		# Choose which line to place the dot on (e.g., 3rd line = index 2)
-		line_index = 3
-		y = self.top_margin + line_index * self.line_spacing
+		d_width=30  # Width of the oval
+		d_height=20
+		line_index = 2
+		y = self.top_margin + line_index/2 * self.line_spacing
 		x = self.width // 2  # Center of the canvas
 
-		# Create the dot as a small red filled circle
-		dot = cv.Circle(
-			x=x,
-			y=y,
-			radius=5,
-			paint=ft.Paint(
-				color=ft.Colors.RED,
-				style=ft.PaintingStyle.FILL
+		
+		original_center_y = 765/3 #ths assumes the original height was this
+		desired_center_y = self.top_margin + line_index * self.line_spacing ##50 is the coordinates
+
+		treb_x, treb_y = 1,1
+		treb_oy = desired_center_y - (original_center_y * treb_y)
+		#resulting_center = original_center_x * treb_x + treb_ox
+		
+
+		#treb_x, treb_y = 2, 2  # for example, half size
+		treb_ox = 0
+
+		self.trebel_shapes=[
+
+			cv.Path([
+			# Start at bottom swirl
+
+		],
+
+				
+
 			)
-		)
 
 
-		noteline = cv.Line(
-				(self.width - self.right_margin)/7, self.height+self.top_margin,
-				(self.width - self.right_margin)/7, 0,
-				paint=semi_transparent_paint
+		]
+
+		self.noteline = cv.Line(
+				(self.width - self.right_margin)/7, (self.height),
+				(self.width - self.right_margin)/7, self.top_margin,
+				paint=self.semi_transparent_paint
 				)
 
+
+		#ddd
 		# Create the canvas with staff lines + dot
-		canvas = cv.Canvas(
-			staff_lines + [dot] +[noteline],
-			width=(self.width+20),
-			height=(self.height+20),
-			expand=True
+		self.canvas = cv.Canvas(
+			self.staff_lines+([self.noteline] if self.show_line else []),
+			width=(self.width if self.show_bass !=True else self.width),
+			height=self.height,
+		#	expand=True
 		)
 
 		# Add the canvas to a container and center it
 
 
-		t_row=ft.Row(
-
+		self.t_row = ft.Row(
 			controls=[
 				ft.Container(
-					content=canvas,
-					#alignment=ft.alignment.center,
-					bgcolor=ft.Colors.WHITE
-					),
-				ft.Container(
-					content=ft.Image(
-						src="treb.PNG",
-						fit=ft.ImageFit.SCALE_DOWN,
-						height=(self.height*1.8),
+					content=self.canvas,
+					# alignment=ft.alignment.center,
+					bgcolor=ft.Colors.WHITE,
+				),
+				
+				ft.Column(
+					controls=[
+						ft.Container(
+							content=ft.Image(
+								src="x.PNG",
+								#fit=ft.ImageFit.SCALE_DOWN,
+								#height=(self.height * 0.5),
+								#width=self.width*0.2
+								),
+							#padding=ft.padding.only(left=-self.width,bottom=-4 if self.show_bass == True else -85),
+
 						),
-					padding=ft.padding.only(bottom=7)
-
-					)
-				],
-			#alignment=ft.MainAxisAlignment.CENTER,
-			spacing=(-self.width)
-
-			)
-
-		b_row=ft.Row(
-
-			controls=[
-				ft.Container(
-					content=canvas,
-					#alignment=ft.alignment.center,
-					bgcolor=ft.Colors.WHITE
-					),
-				ft.Container(
-					content=ft.Image(
-						src="bass.PNG",
-						fit=ft.ImageFit.SCALE_DOWN,
-						height=(self.height/1.3),
+						ft.Container(
+							content=ft.Image(
+								src="x.PNG",
+								#fit=ft.ImageFit.SCALE_DOWN,
+								#height=(self.height*1) if  self.show_bass== True else 0,
+							),
+				#			padding=ft.padding.only(bottom=87),
 						),
-					padding=ft.padding.only(bottom=12)
+					],
 
-					)
-				],
-			#alignment=ft.MainAxisAlignment.CENTER,
-			spacing=(-self.width/1.03)
+					spacing=0
 
-			)
+				),
+			
+			],
+			# alignment=ft.MainAxisAlignment.CENTER,
+			#spacing=(-self.width),
 
-
-
-
+		)
 
 
 		# Add the container to the page body
-		self.Wbody.content = ft.Column(controls=[ctrl for ctrl in [t_row,self.show_bass and b_row] if ctrl])
+		self.Wbody.content = ft.Row(
+								controls=
+									[
+
+									ft.Column(
+										controls=[self.t_row],
+										#horizontal_alignment=ft.CrossAxisAlignment.START
+										alignment=ft.MainAxisAlignment.CENTER
+										),
 
 
+									],
+								alignment=ft.MainAxisAlignment.START,
+								)
+
+
+
+
+
+
+
+		f_options=[2,6]
+		f2_options=[3,6]
+
+		###sidebar options##
+
+		self.from_field = ft.TextField(
+			value=f_options[0] if self.show_bass==True else f2_options[0],
+			input_filter=ft.InputFilter(regex_string=r"[0-9]*", replacement_string="")
+		)
+
+		self.to_field = ft.TextField(
+			value=f_options[1] if self.show_bass==True else f2_options[1] ,
+			input_filter=ft.InputFilter(regex_string=r"[0-9]*", replacement_string="")
+		)
+
+		range_row = ft.Row(
+			controls=[
+				ft.Container(content=self.from_field, alignment=ft.alignment.center, width=50),
+				ft.Text("-TO-"),
+				ft.Container(content=self.to_field, alignment=ft.alignment.center, width=50)
+			],
+			wrap=True,
+			alignment=ft.MainAxisAlignment.CENTER
+
+		)
+
+
+		self.sidebar_content.controls.append(range_row)
+
+
+
+
+	
+
+		self.from_field.on_change = lambda e: self.change_octave_field(self.to_field,self.from_field,self,"up")
+		self.to_field.on_change = lambda e: self.change_octave_field(self.from_field,self.to_field,self,"down")
+
+	async def update_func(self,pl):
+		#print(f"pitches list: {pl}")
+
+		#used in make note for staff notation
+		self.accidentals={}
+		self.last_played_index=float('inf')#default int so that it never triggers first note
+		self.jumped=False#if the note was pushed to the side due to them being right next to each other
+
+
+		#print(f"list of shapes:  {self.canvas.shapes}")
+		
+		self.canvas.shapes=self.canvas.shapes[:(self.num_lines)]
+		print("updateing")
+
+
+
+		pl_count=0
+		for i in pl:
+			pl_count+=1
+
+		#	takes pitch get scale note 
+			tscale_note=str(self.midi_to_scale_note(i))
+		
+			note_name = tscale_note[0]
+			note_octave = tscale_note[-1]
+			print(f"t scale note: {(note_name+note_octave)}")
+
+			self.new_scale_note=tscale_note[0]
+			if len(tscale_note)>2:
+				self.new_scale_note=self.new_scale_note+tscale_note[1]
+
+
+
+
+			
+
+
+
+
+
+
+
+
+
+
+
+
+			print(f"pitchaaa: {i}")
+		#	#self.not_dic has all the keys in the specified range and their position in the canvas
+		#	##if not in range it will not appear in the staff bc i dont have space it would look crazy
+			if str(note_name+note_octave) in self.note_dic:
+				black_d,white_d=self.make_note(pl,pl_count,position=None,index=self.note_dic[str(note_name+note_octave)])
+		#		
+				self.canvas.shapes.append(black_d)
+				self.canvas.shapes.append(white_d)
+				print("second part")
+
+		self.canvas.update
+
+
+		pass
+
+	
+
+	def accidental_type(self,note,always_accidental=False):
+		"""
+		Returns:
+		 - None            if `note` is in the major scale of `key`
+		 - "sharp"         if it's an out-of-scale sharp (e.g. F# in C major)
+		 - "flat"          if it's an out-of-scale flat  (e.g. Bb in C major)
+		 - "natural"       if it's a natural accidental,
+						  i.e. neither # nor b (e.g. E in F# major)
+		"""
+
+		if always_accidental:
+			if len(note)>1:
+				return note[1]
+
+
+			else:
+				return "N"
+
+
+
+
+
+		else:
+
+			if note not in self.scale:
+
+
+				# sanity check: must still be in chromatic
+				#if note not in all_scales.chromatic_major_scales[self.scale_name]:
+				#	raise ValueError(f"{note!r} isn’t even in the chromatic of {key!r}")
+
+
+				##gets the position of key in all notes in chromatic scale,
+
+				#index= all_scales.chromatic_major_scales[self.scale_name].index(note)
+				if len(note)>1:
+					
+					return note[1]
+					
+					#if "#" == note[1]:
+					#	return note[1]
+					#elif "b" in note[1]:
+					#	return "flat"
+				else:
+					return "N"
+
+
+
+
+			else:
+
+				return None
+
+
+
+
+
+
+	def set_note_dic(self):
+		
+		note_names = ['C', 'D','E', 'F','G', 'A', 'B']
+
+
+		#so if the range was 2,6 C6 would have a line index of -4
+		#so if both trebel and bass are showing it would be 29 keys
+		#or 15() keys if only trebel
+		#so it would 
+		if self.show_bass==True:
+			start_line_index=24
+
+		else:
+			start_line_index=10
+
+		for i in range(int(self.note_range[0]),int(self.note_range[1])):
+				for x in note_names:
+					self.note_dic[x+str(i)]=start_line_index
+					start_line_index -=1
+
+
+		self.note_dic["C"+str(self.note_range[1])]=start_line_index
+
+		for i,x in self.note_dic.items():
+			print(f"key:{i},   item{x}:")
+
+	def make_note(self,pl,pl_index,position=None,index=6):
+		
+		d_height=((self.top_margin + 1 * self.line_spacing)-(self.top_margin))*0.7
+		d_width=d_height*1.3  # Width of the oval
+		
+
+
+
+		if type(position)==type(None):
+			
+			if self.show_bass:
+
+				position=self.width // 7.5 
+
+			else:
+				position=self.width // 2
+
+
+		l_count=0
+
+
+		
+
+		print(f"Index is: {index}")
+
+
+
+
+		y = self.top_margin + index/2 * self.line_spacing
+		
+
+		#logic for notes to appear ONTOP AND to the side if the notes are one note apart
+		if (self.last_played_index-1 == index and not self.jumped):
+			position=position+(d_width*0.8)
+			self.jumped	=True
+		#logic for notes to appear to the side of the same note if the notes are the same but different suffix ie: C and C#
+		elif (self.last_played_index == index) and not self.jumped:
+			position=position+d_width
+			self.jumped =True
+
+		else:
+			self.jumped=False
+
+
+		x =  position
+
+		# Create the oval 
+		b_dot = cv.Oval(
+			x=x,
+			y=y- (d_height/2),
+			width=d_width,   # Width of the oval
+			height=d_height,   # Height of the oval (change for desired oval shape)
+			paint=ft.Paint(
+				color=ft.Colors.BLACK,
+				style=ft.PaintingStyle.FILL
+			)
+		)
+
+
+
+
+		# Width of the oval
+
+
+
+		w_dot = cv.Oval(
+			x=x+d_height/2.3,
+			y=y-d_width/4,
+			width=d_height/2.2,   # Width of the oval
+			height=d_width/2,   # Height of the oval (change for desired oval shape)
+			paint=ft.Paint(
+				color=ft.Colors.WHITE,
+				style=ft.PaintingStyle.FILL
+			)
+		)
+
+		d_line= cv.Line(
+			)
+		
+
+		##basically managing all the accidentals 
+
+		accidental=self.accidental_type(self.new_scale_note,always_accidental=False)
+
+		if accidental==None:
+
+
+
+
+
+			#case: when   #@[@]<-new note
+			if index in self.accidentals:
+				t_accidental =self.accidental_type(self.new_scale_note,always_accidental=True)
+				t_list=self.accidentals[index]
+				t_list.append(t_accidental)
+				self.accidentals[index]=t_list
+
+			else:
+
+				ranged_list =range(3)
+
+
+				#case: when #@ <-old note C#2
+				#			 -
+				#			[@]<-new note C#3
+				index_to_change=index
+				for i in ranged_list:
+					index_to_change+=7
+					if index_to_change in self.accidentals:
+						t_accidental =self.accidental_type(self.new_scale_note,always_accidental=True)
+						
+						if index in self.accidentals:
+							t_list=self.accidentals[index]
+
+						else:
+							t_list=[]
+						t_list.append(t_accidental)
+						self.accidentals[index]=t_list
+						del self.accidentals[index_to_change]
+
+				index_to_change=index
+				for i in ranged_list:
+					index_to_change-=7
+					if index_to_change in self.accidentals:
+						t_accidental =self.accidental_type(self.new_scale_note,always_accidental=True)
+						t_list=self.accidentals[index]
+						t_list.append(t_accidental)
+						self.accidentals[index]=t_list
+						del self.accidentals[index_to_change]
+
+		else:
+
+
+			if accidental == "#":
+				print("found accidental sharp")
+			elif accidental == "b":
+				print("found accidental flat")
+
+			elif accidental == "N":
+				print("found accidental Natural")
+
+
+
+
+
+			if index in self.accidentals:
+
+
+				t_list=self.accidentals[index]
+				t_list.append(accidental)
+				self.accidentals[index]=t_list
+
+			else:
+
+
+				if self.last_played_index == index:
+					#if an accidental gets added but theres a note before on the same index on same chord
+					# there must be the "always accidental" sign from the note before
+					old_note=self.midi_to_scale_note(pl[pl_index-2])
+					print(f"old note {old_note}")
+				
+					old_accidental=self.accidental_type(old_note[:-1],always_accidental=True)
+					self.accidentals[index]=[old_accidental,accidental]
+
+				else:
+
+					self.accidentals[index]=[accidental]
+
+		if index in self.accidentals:
+
+			print(f"list of accidentals->  {(self.accidentals[index])}")
+
+		
+
+
+		
+
+		self.last_played_index=index
+		return b_dot,w_dot
+
+
+
+
+
+
+	async def resize(self):
+		print("timetoresizestaff")
+
+		
+		self.height=((self.page_size["y"]/1.7)*self.width_scale)
+		self.width=(self.page_size["x"]*self.width_scale)
+		self.top_margin=self.height*0.18
+
+		self.canvas.width=self.width
+		self.canvas.height=self.height+self.top_margin
+		self.line_spacing = (self.height/self.num_lines)-(self.height*0.013)
+		self.stroke_paint.stroke_width=(self.page_size["y"]*0.01)-(self.height*0.007)
+		self.left_margin = self.width*0.01
+		self.right_margin = self.width*0.02
+
+
+
+		self.semi_transparent_paint.stroke_width=(self.page_size["y"]*0.03)-(self.height*0.007)
+		self.noteline = cv.Line(
+				(self.width - self.right_margin)/7, self.height+self.top_margin/2,
+				(self.width - self.right_margin)/7, self.top_margin/3,
+				paint=self.semi_transparent_paint
+				)
+
+
+
+		self.staff_lines=[]
+		l_count=0
+		for i in range(self.num_lines):
+			l_count+= 1
+			if l_count != 6:
+
+				y = self.top_margin + i * self.line_spacing
+				self.staff_lines.append(cv.Line(
+					self.left_margin, y,
+					self.width - self.right_margin, y,
+					paint=self.stroke_paint
+			))
+		self.canvas.shapes=self.canvas.shapes[(self.num_lines-1):]
+		for i in self.staff_lines:
+			self.canvas.shapes.insert(0,i)
+		self.canvas.shapes[-1]=self.noteline
+
+
+		self.Wbody.update()
+
+		#await trigger_event("total_update")
 
 
 class Sidebar(ft.Container):
 
+
+
+	async def dropdown_changed(self,e):
+		await trigger_event("change_scale",e.control.value.split('/')[0])
+
+
+	def gen_scale_options(self):
+		from pychord.constants import all_scales
+
+
+		scale_options = [f"{maj}Major/{min}Minor" for maj, min in zip(all_scales.major_scales, all_scales.minor_scales)]
+		return scale_options
+
 	def __init__(self,items=[],):
+
+
+
+		#self.scale=
+		
 
 		itemlist=[
 
 			ft.Row(
 				[
 					ft.Text("SETTINGS",size=30,weight=ft.FontWeight.BOLD),
+						],
+						wrap=True,
+						alignment=ft.MainAxisAlignment.CENTER
+
+					),
+
+			ft.Row(
+				controls=[
+					ft.Dropdown(
+						label="Scale",
+						value="CMajor/AMinor",
+						options=[
+							ft.dropdown.Option(f"{maj}Major/{min}Minor")
+							for maj, min in zip(all_scales.major_scales, all_scales.minor_scales)
+						],
+						width=200,
+						on_change=self.dropdown_changed,
+					)
 				],
 				alignment=ft.MainAxisAlignment.CENTER,
 			),
+
+
+
+
 			# divider
 			ft.Container(
 				bgcolor=ft.Colors.BLACK26,
@@ -649,9 +1282,9 @@ class Sidebar(ft.Container):
 			content=ft.Column(
 				itemlist,
 				#tight=True,
+
+			horizontal_alignment=ft.CrossAxisAlignment.CENTER,
 			),
-
-
 
 			padding=ft.padding.all(15),
 			margin=ft.margin.all(0),
@@ -665,3 +1298,5 @@ class Sidebar(ft.Container):
 	def top_nav_change(self, e):
 		self.top_nav_rail.selected_index = e.control.selected_index
 		self.update()
+
+

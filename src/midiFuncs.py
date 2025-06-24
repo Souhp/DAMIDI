@@ -75,3 +75,27 @@ def midi_to_note(midi_pitch):
 
 def strip_octave(note):
 	return ''.join([char for char in note if not char.isdigit()])
+
+
+def get_note_verisons(x):
+
+	 
+	 #   x = "c#"
+
+
+	enharmonic_equivalents = {
+		"C#": ["Db"],
+		"D#": ["Eb"],
+		"F#": ["Gb"],
+		"G#": ["Ab"],
+		"A#": ["Bb"],
+	
+	# Optionally include natural notes with rare enharmonics
+		"B": ["Cb"],
+		"E": ["Fb"],
+		"C": ["B#"],
+		"F": ["E#"]
+	}
+	return enharmonic_equivalents.get(x, [])
+
+
