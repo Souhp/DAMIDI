@@ -853,8 +853,15 @@ class staff(Default_Widget):
 			print(f"t scale note: {(note_name+note_octave)}")
 
 			self.new_scale_note=tscale_note[0]
-			if len(tscale_note)>2:
+			tlen=len(tscale_note)
+			
+			if tlen>3:
+				self.new_scale_note=self.new_scale_note+tscale_note[1]+tscale_note[2]
+
+			elif tlen>2:
 				self.new_scale_note=self.new_scale_note+tscale_note[1]
+
+
 
 
 
@@ -900,10 +907,20 @@ class staff(Default_Widget):
 		"""
 
 		if always_accidental:
-			if len(note)>1:
+			length=len(note)
+
+			if length>2:
+				return (note[1]+note[2])
+
+
+			elif length>1:
+				
 				return note[1]
-
-
+				
+				#if "#" == note[1]:
+				#	return note[1]
+				#elif "b" in note[1]:
+				#	return "flat"
 			else:
 				return "N"
 
@@ -924,7 +941,15 @@ class staff(Default_Widget):
 				##gets the position of key in all notes in chromatic scale,
 
 				#index= all_scales.chromatic_major_scales[self.scale_name].index(note)
-				if len(note)>1:
+				
+
+				length=len(note)
+
+				if length>2:
+					return note[1]+note[2]
+
+
+				elif length>1:
 					
 					return note[1]
 					

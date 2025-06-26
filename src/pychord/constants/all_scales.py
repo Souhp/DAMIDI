@@ -43,23 +43,23 @@ minor_scales = {
 }
 
 chromatic_major_scales = {
-    "C":  default_chromatic,
+    "C":  ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"],
 
-    "G":  default_chromatic,
+    "G":  ["C", "C#", "D", "D#", "E", "F", "F#", "F##", "G#", "A", "A#", "B"],
     "D":  default_chromatic,
     "A":  default_chromatic,
     "E":  default_chromatic,
-    "B":  default_chromatic,
-    "F#": ["C", "C#", "D", "D#", "E", "E#", "F#", "G", "G#", "A", "A#", "B"],##technically the e# is f in th chromatic from what ive seen but i use this scale for staff and there i need connections
-    "Gb": default_chromatic,
+    "B":  ["E#", "C#", "D", "D#", "E", "E#", "F#", "F##", "G#", "A", "A#", "B"],
+    "F#": ["B#", "C#", "C##", "D#", "E", "E#", "F#", "G", "G#", "A", "A#", "B"],##technically the e# is f in th chromatic from what ive seen but i use this scale for staff and there i need connections
+    "Gb": ["B#", "C#", "C##", "D#", "E", "E#", "F#", "G", "G#", "A", "A#", "B"],
 
-    "Db": ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"],
-    "C#": ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"],
+    #"Db": ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"],
+    "C#": ["C", "Db", "D", "Eb", "Fb", "F", "Gb", "G", "Ab", "A", "Bb", "Cb"],
 
-    "Ab": ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"],
+    "Ab": ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "Cb"],
     "Eb": ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"],
-    "Bb": ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"],
-    "F":  ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "Bb", "B"],
+    "Bb": ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"],
+    "F":  ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"],
 }
 
 chromatic_minor_scales = {
