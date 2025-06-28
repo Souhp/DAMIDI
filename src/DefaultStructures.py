@@ -53,6 +53,8 @@ class Default_Widget():
 
 	def midi_to_scale_note(self,pitch):
 
+		print()
+
 		note_names = all_scales.chromatic_major_scales[self.scale_name]
 		if 0 <= pitch <= 127:
 			note = note_names[pitch % 12]
@@ -601,7 +603,7 @@ class staff(Default_Widget):
 		self.canvas = cv.Canvas()
 		self.show_bass=show_bass
 		self.note_dic={}
-		
+		self.pl=[]
 		
 		
 
@@ -830,9 +832,13 @@ class staff(Default_Widget):
 
 		#used in make note for staff notation
 		self.accidentals={}
+		self.accidental_state={}
+
 		self.last_played_index=float('inf')#default int so that it never triggers first note
 		self.jumped=False#if the note was pushed to the side due to them being right next to each other
 
+		#for staff im saving the pitch list because i need to for ingame size change
+		self.pl=pl
 
 		#print(f"list of shapes:  {self.canvas.shapes}")
 		
@@ -842,7 +848,7 @@ class staff(Default_Widget):
 
 
 		pl_count=0
-		for i in pl:
+		for i in self.pl:
 			pl_count+=1
 
 		#	takes pitch get scale note 
@@ -855,6 +861,9 @@ class staff(Default_Widget):
 			self.new_scale_note=tscale_note[0]
 			tlen=len(tscale_note)
 			
+
+
+			#adds the note and remove the octave at the end
 			if tlen>3:
 				self.new_scale_note=self.new_scale_note+tscale_note[1]+tscale_note[2]
 
@@ -883,11 +892,36 @@ class staff(Default_Widget):
 		#	#self.not_dic has all the keys in the specified range and their position in the canvas
 		#	##if not in range it will not appear in the staff bc i dont have space it would look crazy
 			if str(note_name+note_octave) in self.note_dic:
-				black_d,white_d=self.make_note(pl,pl_count,position=None,index=self.note_dic[str(note_name+note_octave)])
-		#		
-				self.canvas.shapes.append(black_d)
-				self.canvas.shapes.append(white_d)
-				print("second part")
+				
+
+				#scales like F# will have C## so to not have c,c#,c## we make c to b#.
+				#but my systems is crude and does not work like that. it just takes in an index and note
+				#so I have to switch it back for this function to let the staff know that this is the first appeance of B and not the last B in the scale
+				if self.new_scale_note=="B#":
+					index =self.note_dic[str(note_name+str(int(note_octave)-1))]	
+				else:
+					index =self.note_dic[str(note_name+note_octave)]
+
+				note_shapes=self.make_note(pl_count,position=None,index=index)
+
+				
+				self.canvas.shapes.append(note_shapes[-2])
+				self.canvas.shapes.append(note_shapes[-1])
+				temp_list=[]
+				for i in note_shapes[:-2]:
+					temp_list.append(i)
+
+				self.accidental_state[str(index)]=temp_list	
+
+		#accidentals are added after because they change space retoractively on future accidentals
+		for i in self.accidental_state.values():
+			print(f"i= {i}")
+			for e in i:
+				print(f"e= {e}")
+				self.canvas.shapes.append(e)
+
+
+	 
 
 		self.canvas.update
 
@@ -907,6 +941,9 @@ class staff(Default_Widget):
 		"""
 
 		if always_accidental:
+
+
+			#find the accidentals, if there is none it is a natural
 			length=len(note)
 
 			if length>2:
@@ -929,7 +966,7 @@ class staff(Default_Widget):
 
 
 		else:
-
+				#if ykyk
 			if note not in self.scale:
 
 
@@ -998,7 +1035,8 @@ class staff(Default_Widget):
 		for i,x in self.note_dic.items():
 			print(f"key:{i},   item{x}:")
 
-	def make_note(self,pl,pl_index,position=None,index=6):
+	def make_note(self,pl_index,position=None,index=6):
+		return_list=[]
 		
 		d_height=((self.top_margin + 1 * self.line_spacing)-(self.top_margin))*0.7
 		d_width=d_height*1.3  # Width of the oval
@@ -1011,9 +1049,11 @@ class staff(Default_Widget):
 			if self.show_bass:
 
 				position=self.width // 7.5 
+				og_position=self.width // 7.5
 
 			else:
 				position=self.width // 2
+				og_position=self.width // 2
 
 
 		l_count=0
@@ -1156,7 +1196,7 @@ class staff(Default_Widget):
 				if self.last_played_index == index:
 					#if an accidental gets added but theres a note before on the same index on same chord
 					# there must be the "always accidental" sign from the note before
-					old_note=self.midi_to_scale_note(pl[pl_index-2])
+					old_note=self.midi_to_scale_note(self.pl[pl_index-2])
 					print(f"old note {old_note}")
 				
 					old_accidental=self.accidental_type(old_note[:-1],always_accidental=True)
@@ -1168,15 +1208,79 @@ class staff(Default_Widget):
 
 		if index in self.accidentals:
 
+
+
+
+
 			print(f"list of accidentals->  {(self.accidentals[index])}")
 
-		
 
 
-		
+			for i in self.accidentals[index]:
+				match i:
+					case "#":
+						print("case FOUND")
+						#art for making sharps
+						sharp_x=og_position-(d_width-d_width/4)
+
+						sharp_line1 = cv.Line(
+							sharp_x+(d_width/2), y+((d_height/4)-d_height/7),
+							sharp_x-(d_width/2), y+(d_height/4),
+							paint=self.stroke_paint,
+
+						)
+
+						sharp_line2 = cv.Line(
+							sharp_x+(d_width/2), y-((d_height/4)+d_height/7),
+							sharp_x-(d_width/2), y-(d_height/4),
+							paint=self.stroke_paint,
+
+						)						
+
+						sharp_vert1=cv.Line(
+							sharp_x+(d_width/5), y-(d_width-(d_width/3)),
+							sharp_x+(d_width/5), y+(d_width-(d_width/3)),
+							paint=self.stroke_paint,
+
+						)
+
+						sharp_vert2=cv.Line(
+							sharp_x-(d_width/5), y-(d_width-(d_width/3)),
+							sharp_x-(d_width/5), y+(d_width-(d_width/3)),
+							paint=self.stroke_paint,
+
+						)
+
+
+
+						return_list.append(sharp_line1)
+						return_list.append(sharp_line2)
+						return_list.append(sharp_vert1)
+						return_list.append(sharp_vert2)
+						#pass
+
+					case "b":
+						pass
+
+					case "N":
+						pass
+
+					case "##":
+						pass
+
+					case "bb":
+						pass
+
+
+
+
+
 
 		self.last_played_index=index
-		return b_dot,w_dot
+
+		return_list.append(b_dot)	
+		return_list.append(w_dot)	
+		return return_list
 
 
 
@@ -1221,12 +1325,15 @@ class staff(Default_Widget):
 					self.width - self.right_margin, y,
 					paint=self.stroke_paint
 			))
-		self.canvas.shapes=self.canvas.shapes[(self.num_lines-1):]
+		#self.canvas.shapes=self.canvas.shapes[:(self.num_lines-1)]
+
+		#resets notelines and clears past notes
+		self.canvas.shapes=[]
 		for i in self.staff_lines:
 			self.canvas.shapes.insert(0,i)
-		self.canvas.shapes[-1]=self.noteline
+		self.canvas.shapes.append(self.noteline)
 
-
+		await self.update_func(self.pl)
 		self.Wbody.update()
 
 		#await trigger_event("total_update")

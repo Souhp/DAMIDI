@@ -161,3 +161,8 @@ cython_debug/
 
 # Flet
 storage/
+
+#custom
+Scripts/
+.vs/
+pyvenv.cfg
