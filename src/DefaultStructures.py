@@ -11,6 +11,7 @@ from pychord.constants import all_scales
 from collections import namedtuple
 default_scale={"C":  ["C", "D", "E", "F", "G", "A", "B"]}
 import math
+import copy
 
 
 
@@ -835,7 +836,11 @@ class staff(Default_Widget):
 		self.accidental_state={}
 
 		self.last_played_index=float('inf')#default int so that it never triggers first note
+
+
 		self.jumped=False#if the note was pushed to the side due to them being right next to each other
+		self.accidental_to_jump=False
+		self.accidental_jumped=False
 
 		#for staff im saving the pitch list because i need to for ingame size change
 		self.pl=pl
@@ -904,21 +909,27 @@ class staff(Default_Widget):
 
 				note_shapes=self.make_note(pl_count,position=None,index=index)
 
-				
-				self.canvas.shapes.append(note_shapes[-2])
-				self.canvas.shapes.append(note_shapes[-1])
+
+
+				for i in note_shapes[-1]:
+					self.canvas.shapes.append(i)
+
 				temp_list=[]
-				for i in note_shapes[:-2]:
+				for i in note_shapes[:-1]:
 					temp_list.append(i)
 
 				self.accidental_state[str(index)]=temp_list	
 
-		#accidentals are added after because they change space retoractively on future accidentals
+		#accidentals are added after because they change space retroactively on future accidentals
 		for i in self.accidental_state.values():
-			print(f"i= {i}")
+			#simple for loop ^_^
 			for e in i:
+				#oh no nested..but lists are short -_-
+				#should be good
 				print(f"e= {e}")
-				self.canvas.shapes.append(e)
+				for x in e:
+					##wtf have i done 
+					self.canvas.shapes.append(x)
 
 
 	 
@@ -1215,54 +1226,170 @@ class staff(Default_Widget):
 			print(f"list of accidentals->  {(self.accidentals[index])}")
 
 
+			side_count=0
+			tlen=len(self.accidentals[index])
+
 
 			for i in self.accidentals[index]:
+
+
+				#this var controls accidentals on the same index before retroactive spacing
+				position_mult=tlen-side_count
+				side_count+=1
+
+				
+
+				if  self.last_played_index+1==index:
+
+					#checks if an accidental is before it 
+					if position_mult>1:
+						if self.accidental_jumped==True:
+							position_mult+=1
+							
+
+						if self.accidental_to_jump1==True:
+							position_mult+=2
+
+
+							#if there is an accidental next index
+						if str(int(index)+1) in self.accidentals:
+							position_mult+=1
+							
+
+
+							length_of_next_index=len(self.accidentals[str(int(index)+1)])
+							if length_of_next_index>1:
+								pass
+
+
+
+						#last index or first accidental depending   N[#]|Note  listv=[N,#<-]
+					else:
+
+
+
+						if self.accidental_to_jump==True:
+								 
+							position_mult+1
+							self.accidental_to_jump=False
+							self.accidental_jumped=True
+							
+						else:
+							self.accidental_to_jump=True
+							self.accidental_jumped=False
+							
+
+
+
+
+				else:
+					self.accidental_to_jump=False
+					self.accidental_to_jump2=False
+
+
+				space_between=d_width/2
+				accidental_x=(og_position+d_width/2)-((d_width*0.9)*position_mult)
+
+
+
+
+
+
+				
+
 				match i:
 					case "#":
 						print("case FOUND")
 						#art for making sharps
-						sharp_x=og_position-(d_width-d_width/4)
+						
 
 						sharp_line1 = cv.Line(
-							sharp_x+(d_width/2), y+((d_height/4)-d_height/7),
-							sharp_x-(d_width/2), y+(d_height/4),
+							accidental_x+(d_width/3), y+((d_height/4)-d_height/7),
+							accidental_x-(d_width/3), y+(d_height/4),
 							paint=self.stroke_paint,
 
 						)
 
 						sharp_line2 = cv.Line(
-							sharp_x+(d_width/2), y-((d_height/4)+d_height/7),
-							sharp_x-(d_width/2), y-(d_height/4),
+							accidental_x+(d_width/3), y-((d_height/4)+d_height/7),
+							accidental_x-(d_width/3), y-(d_height/4),
 							paint=self.stroke_paint,
 
 						)						
 
 						sharp_vert1=cv.Line(
-							sharp_x+(d_width/5), y-(d_width-(d_width/3)),
-							sharp_x+(d_width/5), y+(d_width-(d_width/3)),
+							accidental_x+(d_width/7), y-(d_width-(d_width/3)),
+							accidental_x+(d_width/7), y+(d_width-(d_width/3)),
 							paint=self.stroke_paint,
 
 						)
 
 						sharp_vert2=cv.Line(
-							sharp_x-(d_width/5), y-(d_width-(d_width/3)),
-							sharp_x-(d_width/5), y+(d_width-(d_width/3)),
+							accidental_x-(d_width/7), y-(d_width-(d_width/3)),
+							accidental_x-(d_width/7), y+(d_width-(d_width/3)),
 							paint=self.stroke_paint,
 
 						)
 
 
 
-						return_list.append(sharp_line1)
-						return_list.append(sharp_line2)
-						return_list.append(sharp_vert1)
-						return_list.append(sharp_vert2)
-						#pass
+						return_list.append([sharp_line1,sharp_line2,sharp_vert1,sharp_vert2])
 
 					case "b":
-						pass
+
+						#newcolor=copy.copy(self.stroke_paint)
+						#newcolor.color=ft.Colors.GREEN_ACCENT_400
+						
+						flat_vert1=cv.Line(
+							accidental_x-(d_width/20), y-(d_width-(d_width/5)),
+							accidental_x-(d_width/20), y+(d_width-(d_width/1.2)),
+							paint=self.stroke_paint,
+							)
+
+						flat_curve=cv.Path(
+							[
+								#starts here
+								cv.Path.MoveTo(accidental_x-(d_width/20), y+(d_width-(d_width/1.1))),
+								cv.Path.QuadraticTo(
+									accidental_x+(d_width*0.5),y-(d_width*0.2),#curve towards this point			
+									(accidental_x-(d_width/20 )),y+(d_width-(d_width*1.4)),#point to reach
+									1 #WEIGHT
+									),
+								cv.Path.Close(),
+							],
+							paint=self.stroke_paint,
+							)
+
+
+
+
+						return_list.append([flat_vert1,flat_curve])
+			
 
 					case "N":
+
+						nat_vert1=cv.Line(
+							accidental_x+(d_width/5), y-(d_width-(d_width/3)),
+							accidental_x+(d_width/5), y+(d_width-(d_width/3)),
+							paint=self.stroke_paint,
+
+						)
+
+						nat_vert2=cv.Line(
+							accidental_x-(d_width/5), y-(d_width-(d_width/3)),
+							accidental_x-(d_width/5), y+(d_width-(d_width/3)),
+							paint=self.stroke_paint,
+
+						)
+
+						cross_line=cv.Line(
+							accidental_x-(d_width/5), y-(d_width-(d_width/3)),
+							accidental_x+(d_width/5), y+(d_width-(d_width/3)),
+							paint=self.stroke_paint,
+
+						)
+
+						return_list.append([nat_vert1,nat_vert2,cross_line])
 						pass
 
 					case "##":
@@ -1278,8 +1405,8 @@ class staff(Default_Widget):
 
 		self.last_played_index=index
 
-		return_list.append(b_dot)	
-		return_list.append(w_dot)	
+		return_list.append([b_dot,w_dot])	
+		
 		return return_list
 
 
@@ -1327,10 +1454,10 @@ class staff(Default_Widget):
 			))
 		#self.canvas.shapes=self.canvas.shapes[:(self.num_lines-1)]
 
-		#resets notelines and clears past notes
+		#resets notelines and clears past notes   
 		self.canvas.shapes=[]
 		for i in self.staff_lines:
-			self.canvas.shapes.insert(0,i)
+			self.canvas.shapes.insert(0,i)  #<---- can be optimised to be added on creation instead of looping twice over staff lines
 		self.canvas.shapes.append(self.noteline)
 
 		await self.update_func(self.pl)
