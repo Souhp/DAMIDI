@@ -1,24 +1,32 @@
-<<<<<<< HEAD
+
 # DAMIDI
-=======
+
 # Midireader app
 
 ## Run the app
 
-### uv
 
-Run as a desktop appam cum:
 
-am cum
+
+*PS a lot of things in the requirements txt are not nessisary to run the app it just happens to be in my pip freeze and I havent spend the time optimizing the list srry for the long download.:(*
+
+*FYI You must go through and remove some obsolete packages when pasting from requirements to TOML when building the app atm.*
+
+
+
+
+Run as a desktop app:
+
 
 ```
-uv run flet run
+flet run
 ```
 
+If your linux distro does not like flets gui
 Run as a web app:
 
 ```
-uv run flet run --web
+flet run --web
 ```
 
 ### Poetry
@@ -45,29 +53,6 @@ For more details on running the app, refer to the [Getting Started Guide](https:
 
 ## Build the app
 
-### Android
-
-```
-flet build apk -v
-```
-
-For more details on building and signing `.apk` or `.aab`, refer to the [Android Packaging Guide](https://flet.dev/docs/publish/android/).
-
-### iOS
-
-```
-flet build ipa -v
-```
-
-For more details on building and signing `.ipa`, refer to the [iOS Packaging Guide](https://flet.dev/docs/publish/ios/).
-
-### macOS
-
-```
-flet build macos -v
-```
-
-For more details on building macOS package, refer to the [macOS Packaging Guide](https://flet.dev/docs/publish/macos/).
 
 ### Linux
 
@@ -84,4 +69,4 @@ flet build windows -v
 ```
 
 For more details on building Windows package, refer to the [Windows Packaging Guide](https://flet.dev/docs/publish/windows/).
->>>>>>> 1f70197 (Initial commit)
+
