@@ -6,7 +6,7 @@
 ## Run the app
 
 
-
+plz use: python 3.12.8
 
 *PS a lot of things in the requirements txt are not nessisary to run the app it just happens to be in my pip freeze and I havent spend the time optimizing the list srry for the long download.:(*
 
