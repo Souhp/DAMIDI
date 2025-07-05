@@ -928,7 +928,7 @@ class staff(Default_Widget):
 				#should be good
 				print(f"e= {e}")
 				for x in e:
-					##wtf have i done 
+					##wtf have i done 0_0
 					self.canvas.shapes.append(x)
 
 
@@ -1238,53 +1238,37 @@ class staff(Default_Widget):
 				side_count+=1
 
 				
-
-				if  self.last_played_index+1==index:
+				print(f"current index: {index}")
+				print(f"Last played index: {self.last_played_index}")
+				if  (self.last_played_index-1)==index:
 
 					#checks if an accidental is before it 
+					print(f"position multiplier: {position_mult}")
 					if position_mult>1:
-						if self.accidental_jumped==True:
-							position_mult+=1
-							
-
-						if self.accidental_to_jump1==True:
-							position_mult+=2
+						pass
 
 
-							#if there is an accidental next index
-						if str(int(index)+1) in self.accidentals:
-							position_mult+=1
-							
-
-
-							length_of_next_index=len(self.accidentals[str(int(index)+1)])
-							if length_of_next_index>1:
-								pass
-
-
-
-						#last index or first accidental depending   N[#]|Note  listv=[N,#<-]
 					else:
-
-
-
 						if self.accidental_to_jump==True:
-								 
-							position_mult+1
+
 							self.accidental_to_jump=False
-							self.accidental_jumped=True
-							
+							position_mult+=1
+
 						else:
 							self.accidental_to_jump=True
-							self.accidental_jumped=False
-							
 
 
+
+
+				
 
 
 				else:
-					self.accidental_to_jump=False
-					self.accidental_to_jump2=False
+					
+					self.accidental_to_jump=True
+					#self.accidental_to_jump2=False
+					#self.accidental_jumped=False
+
 
 
 				space_between=d_width/2

@@ -166,3 +166,5 @@ storage/
 Scripts/
 .vs/
 pyvenv.cfg
+mr_env/
+share/
