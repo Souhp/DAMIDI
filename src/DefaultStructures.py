@@ -835,6 +835,7 @@ class staff(Default_Widget):
 		self.accidentals={}
 		self.accidental_state={}
 
+		self.was_accidental=False
 		self.last_played_index=float('inf')#default int so that it never triggers first note
 
 
@@ -910,7 +911,7 @@ class staff(Default_Widget):
 		#accidentals are added after because they change space retroactively on future accidentals
 		#the accidentals gets added in thesame order as notes get added
 		
-		
+
 		for i in self.accidental_state.values():
 			
 			#simple for loop ^_^
@@ -1239,10 +1240,11 @@ class staff(Default_Widget):
 				print(f"Last played index: {self.last_played_index}")
 				print(f"inner index: {inner_index}")
 				print(f"accidental: {i}")
-				if  (self.last_played_index-1)==index:
+				print(f"accidental should be jumped {self.accidental_to_jump}")
+				if  (self.last_played_index-1)==index and self.was_accidental:
 
 					#checks if an accidental is before it 
-					print(f"position multiplier: {position_mult}")
+					print(f"FOUND ACCIDENTAL BEFORE position multiplier: {position_mult}")
 
 					#i could make an addition for third accidentals on the same index but nah for now
 
@@ -1259,6 +1261,7 @@ class staff(Default_Widget):
 
 						else:
 							self.accidental_to_jump=True
+							print("aciidental should be jumpednext time")
 
 
 
@@ -1292,8 +1295,8 @@ class staff(Default_Widget):
 				accidental_x=(og_position+d_width/2)-((d_width*0.9)*position_mult)
 
 
-
-
+				#---------------------------------------#
+				#---------------------------------------#
 
 
 				
@@ -1401,6 +1404,10 @@ class staff(Default_Widget):
 
 
 
+			self.was_accidental=True
+		else:
+			self.was_accidental=False
+			self.accidental_to_jump=False
 
 		try:
 
@@ -1412,6 +1419,9 @@ class staff(Default_Widget):
 		except UnboundLocalError:
 			print("error no pos mult")
 			pass
+
+
+
 
 
 		return_list.append([b_dot,w_dot])	
