@@ -880,19 +880,6 @@ class staff(Default_Widget):
 
 
 
-			
-
-
-
-
-
-
-
-
-
-
-
-
 			print(f"pitchaaa: {i}")
 		#	#self.not_dic has all the keys in the specified range and their position in the canvas
 		#	##if not in range it will not appear in the staff bc i dont have space it would look crazy
@@ -926,7 +913,7 @@ class staff(Default_Widget):
 			for e in i:
 				#oh no nested..but lists are short -_-
 				#should be good
-				print(f"e= {e}")
+				#print(f"e= {e}")
 				for x in e:
 					##wtf have i done 0_0
 					self.canvas.shapes.append(x)
@@ -1209,7 +1196,8 @@ class staff(Default_Widget):
 					# there must be the "always accidental" sign from the note before
 					old_note=self.midi_to_scale_note(self.pl[pl_index-2])
 					print(f"old note {old_note}")
-				
+					
+					#this makes sure that if a note is before an accidental it also shows its sign
 					old_accidental=self.accidental_type(old_note[:-1],always_accidental=True)
 					self.accidentals[index]=[old_accidental,accidental]
 
@@ -1234,21 +1222,31 @@ class staff(Default_Widget):
 
 
 				#this var controls accidentals on the same index before retroactive spacing
-				position_mult=tlen-side_count
+				inner_index=tlen-side_count
+
+
+				#this var controls accidentals on the same index before retroactive spacing
+				position_mult=inner_index
 				side_count+=1
 
 				
 				print(f"current index: {index}")
 				print(f"Last played index: {self.last_played_index}")
+				print(f"inner index: {inner_index}")
+				print(f"accidental: {i}")
 				if  (self.last_played_index-1)==index:
 
 					#checks if an accidental is before it 
 					print(f"position multiplier: {position_mult}")
-					if position_mult>1:
-						pass
+
+					#i could make an addition for third accidentals on the same index but nah for now
 
 
-					else:
+
+
+
+
+					if inner_index==1:
 						if self.accidental_to_jump==True:
 
 							self.accidental_to_jump=False
@@ -1268,6 +1266,20 @@ class staff(Default_Widget):
 					self.accidental_to_jump=True
 					#self.accidental_to_jump2=False
 					#self.accidental_jumped=False
+				
+				if inner_index>1:
+
+
+					if self.accidental_to_jump==True:
+						#position_mult+=1
+						pass
+					print(f"index-1:{(index-1)}")
+					if (index-1) in self.accidentals:
+						#could check for third accidental here
+						#if len(self.accidentals[index+1]) > x ect...
+						#but i assume only 2 for now
+						print("has note ontop!!!!!!")
+						position_mult+=1
 
 
 
@@ -1385,9 +1397,17 @@ class staff(Default_Widget):
 
 
 
+		try:
 
 
-		self.last_played_index=index
+
+			self.last_played_index=index
+			print("setting index for next time!!")
+
+		except UnboundLocalError:
+			print("error no pos mult")
+			pass
+
 
 		return_list.append([b_dot,w_dot])	
 		
