@@ -908,7 +908,11 @@ class staff(Default_Widget):
 				self.accidental_state[str(index)]=temp_list	
 
 		#accidentals are added after because they change space retroactively on future accidentals
+		#the accidentals gets added in thesame order as notes get added
+		
+		
 		for i in self.accidental_state.values():
+			
 			#simple for loop ^_^
 			for e in i:
 				#oh no nested..but lists are short -_-
@@ -917,6 +921,7 @@ class staff(Default_Widget):
 				for x in e:
 					##wtf have i done 0_0
 					self.canvas.shapes.append(x)
+		
 
 
 	 
