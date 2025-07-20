@@ -1,0 +1,6 @@
+so my issue is the the accidentals are added after but that does not matter because it is added in make note.
+
+maek a new functon for adding accidentlsso that it can be done after on the dictionary containing the accidentlsin text ie: [N,#]
+ done
+
+ mustfind a fix for get last index

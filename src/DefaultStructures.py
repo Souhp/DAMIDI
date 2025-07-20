@@ -912,17 +912,17 @@ class staff(Default_Widget):
 		#the accidentals gets added in thesame order as notes get added
 		
 
-		for i in self.accidental_state.values():
-			
+		
+		for i in self.accidentals:
 			#simple for loop ^_^
-			for e in i:
+			print(f"the index {i}")
+			for i in self.make_accidental(i):
 				#oh no nested..but lists are short -_-
 				#should be good
-				#print(f"e= {e}")
-				for x in e:
+				for x in i:
 					##wtf have i done 0_0
 					self.canvas.shapes.append(x)
-		
+	
 
 
 	 
@@ -935,6 +935,9 @@ class staff(Default_Widget):
 	
 
 	def accidental_type(self,note,always_accidental=False):
+
+		#note should be anything like c# or gb
+
 		"""
 		Returns:
 		 - None            if `note` is in the major scale of `key`
@@ -1039,26 +1042,239 @@ class staff(Default_Widget):
 		for i,x in self.note_dic.items():
 			print(f"key:{i},   item{x}:")
 
+	
+	def make_accidental(self,index):
+		
+
+		d_height=self.d_height	
+		d_width=self.d_width
+		position=self.position
+		og_position=self.og_position
+		y = self.top_margin + index/2 * self.line_spacing
+		return_list	=[]
+
+
+		print(f"list of accidentals->  {(self.accidentals[index])}")
+
+
+		side_count=0
+		tlen=len(self.accidentals[index])
+
+
+		for i in self.accidentals[index]:
+
+
+			#this var controls accidentals on the same index before retroactive spacing
+			inner_index=tlen-side_count
+
+
+			#this var controls accidentals on the same index before retroactive spacing
+			position_mult=inner_index
+			side_count+=1
+
+			
+			print(f"current index: {index}")
+			print(f"Last played index: {self.last_played_index}")
+			print(f"inner index: {inner_index}")
+			print(f"accidental: {i}")
+			print(f"accidental should be jumped {self.accidental_to_jump}")
+			if  (self.last_played_index-1)==index and self.was_accidental:
+
+				#checks if an accidental is before it 
+				print(f"FOUND ACCIDENTAL BEFORE position multiplier: {position_mult}")
+
+				#i could make an addition for third accidentals on the same index but nah for now
+
+
+
+
+
+
+				if inner_index==1:
+					if self.accidental_to_jump==True:
+
+						self.accidental_to_jump=False
+						position_mult+=1
+
+					else:
+						self.accidental_to_jump=True
+						print("aciidental should be jumpednext time")
+
+
+
+
+			
+
+
+			else:
+				
+				self.accidental_to_jump=True
+				#self.accidental_to_jump2=False
+				#self.accidental_jumped=False
+			
+			
+
+
+
+
+			if inner_index>1:
+
+
+				if self.accidental_to_jump==True:
+					#position_mult+=1
+					pass
+				print(f"index-1:{(index-1)}")
+				if (index-1) in self.accidentals:
+					#could check for third accidental here
+					#if len(self.accidentals[index+1]) > x ect...
+					#but i assume only 2 for now
+					print("has note ontop!!!!!!")
+					position_mult+=1
+
+
+
+			space_between=d_width/2
+			accidental_x=(og_position+d_width/2)-((d_width*0.9)*position_mult)
+
+
+			#---------------------------------------#
+			#---------------------------------------#
+
+
+			
+
+			match i:
+				case "#":
+					print("case FOUND")
+					#art for making sharps
+					
+
+					sharp_line1 = cv.Line(
+						accidental_x+(d_width/3), y+((d_height/4)-d_height/7),
+						accidental_x-(d_width/3), y+(d_height/4),
+						paint=self.stroke_paint,
+
+					)
+
+					sharp_line2 = cv.Line(
+						accidental_x+(d_width/3), y-((d_height/4)+d_height/7),
+						accidental_x-(d_width/3), y-(d_height/4),
+						paint=self.stroke_paint,
+
+					)						
+
+					sharp_vert1=cv.Line(
+						accidental_x+(d_width/7), y-(d_width-(d_width/3)),
+						accidental_x+(d_width/7), y+(d_width-(d_width/3)),
+						paint=self.stroke_paint,
+
+					)
+
+					sharp_vert2=cv.Line(
+						accidental_x-(d_width/7), y-(d_width-(d_width/3)),
+						accidental_x-(d_width/7), y+(d_width-(d_width/3)),
+						paint=self.stroke_paint,
+
+					)
+
+
+
+					return_list.append([sharp_line1,sharp_line2,sharp_vert1,sharp_vert2])
+
+				case "b":
+
+					#newcolor=copy.copy(self.stroke_paint)
+					#newcolor.color=ft.Colors.GREEN_ACCENT_400
+					
+					flat_vert1=cv.Line(
+						accidental_x-(d_width/20), y-(d_width-(d_width/5)),
+						accidental_x-(d_width/20), y+(d_width-(d_width/1.2)),
+						paint=self.stroke_paint,
+						)
+
+					flat_curve=cv.Path(
+						[
+							#starts here
+							cv.Path.MoveTo(accidental_x-(d_width/20), y+(d_width-(d_width/1.1))),
+							cv.Path.QuadraticTo(
+								accidental_x+(d_width*0.5),y-(d_width*0.2),#curve towards this point			
+								(accidental_x-(d_width/20 )),y+(d_width-(d_width*1.4)),#point to reach
+								1 #WEIGHT
+								),
+							cv.Path.Close(),
+						],
+						paint=self.stroke_paint,
+						)
+
+
+
+
+					return_list.append([flat_vert1,flat_curve])
+		
+
+				case "N":
+
+					nat_vert1=cv.Line(
+						accidental_x+(d_width/5), y-(d_width-(d_width/3)),
+						accidental_x+(d_width/5), y+(d_width-(d_width/3)),
+						paint=self.stroke_paint,
+
+					)
+
+					nat_vert2=cv.Line(
+						accidental_x-(d_width/5), y-(d_width-(d_width/3)),
+						accidental_x-(d_width/5), y+(d_width-(d_width/3)),
+						paint=self.stroke_paint,
+
+					)
+
+					cross_line=cv.Line(
+						accidental_x-(d_width/5), y-(d_width-(d_width/3)),
+						accidental_x+(d_width/5), y+(d_width-(d_width/3)),
+						paint=self.stroke_paint,
+
+					)
+
+					return_list.append([nat_vert1,nat_vert2,cross_line])
+					pass
+
+				case "##":
+					pass
+
+				case "bb":
+					pass
+
+
+	#bug to fix
+	#	self.was_accidental=True
+	#else:
+	#	self.was_accidental=False
+	#	self.accidental_to_jump=False
+
+
+	
+
+
+
+
+
+		return return_list
+
+
+
+
+
+
+
+
+
 	def make_note(self,pl_index,position=None,index=6):
 		return_list=[]
 		
-		d_height=((self.top_margin + 1 * self.line_spacing)-(self.top_margin))*0.7
-		d_width=d_height*1.3  # Width of the oval
-		
-
-
-
-		if type(position)==type(None):
-			
-			if self.show_bass:
-
-				position=self.width // 7.5 
-				og_position=self.width // 7.5
-
-			else:
-				position=self.width // 2
-				og_position=self.width // 2
-
+		d_height=self.d_height	
+		d_width=self.d_width
+		position=self.position
+		og_position=self.og_position
 
 		l_count=0
 
@@ -1211,203 +1427,7 @@ class staff(Default_Widget):
 
 					self.accidentals[index]=[accidental]
 
-		if index in self.accidentals:
 
-
-
-
-
-			print(f"list of accidentals->  {(self.accidentals[index])}")
-
-
-			side_count=0
-			tlen=len(self.accidentals[index])
-
-
-			for i in self.accidentals[index]:
-
-
-				#this var controls accidentals on the same index before retroactive spacing
-				inner_index=tlen-side_count
-
-
-				#this var controls accidentals on the same index before retroactive spacing
-				position_mult=inner_index
-				side_count+=1
-
-				
-				print(f"current index: {index}")
-				print(f"Last played index: {self.last_played_index}")
-				print(f"inner index: {inner_index}")
-				print(f"accidental: {i}")
-				print(f"accidental should be jumped {self.accidental_to_jump}")
-				if  (self.last_played_index-1)==index and self.was_accidental:
-
-					#checks if an accidental is before it 
-					print(f"FOUND ACCIDENTAL BEFORE position multiplier: {position_mult}")
-
-					#i could make an addition for third accidentals on the same index but nah for now
-
-
-
-
-
-
-					if inner_index==1:
-						if self.accidental_to_jump==True:
-
-							self.accidental_to_jump=False
-							position_mult+=1
-
-						else:
-							self.accidental_to_jump=True
-							print("aciidental should be jumpednext time")
-
-
-
-
-				
-
-
-				else:
-					
-					self.accidental_to_jump=True
-					#self.accidental_to_jump2=False
-					#self.accidental_jumped=False
-				
-				if inner_index>1:
-
-
-					if self.accidental_to_jump==True:
-						#position_mult+=1
-						pass
-					print(f"index-1:{(index-1)}")
-					if (index-1) in self.accidentals:
-						#could check for third accidental here
-						#if len(self.accidentals[index+1]) > x ect...
-						#but i assume only 2 for now
-						print("has note ontop!!!!!!")
-						position_mult+=1
-
-
-
-				space_between=d_width/2
-				accidental_x=(og_position+d_width/2)-((d_width*0.9)*position_mult)
-
-
-				#---------------------------------------#
-				#---------------------------------------#
-
-
-				
-
-				match i:
-					case "#":
-						print("case FOUND")
-						#art for making sharps
-						
-
-						sharp_line1 = cv.Line(
-							accidental_x+(d_width/3), y+((d_height/4)-d_height/7),
-							accidental_x-(d_width/3), y+(d_height/4),
-							paint=self.stroke_paint,
-
-						)
-
-						sharp_line2 = cv.Line(
-							accidental_x+(d_width/3), y-((d_height/4)+d_height/7),
-							accidental_x-(d_width/3), y-(d_height/4),
-							paint=self.stroke_paint,
-
-						)						
-
-						sharp_vert1=cv.Line(
-							accidental_x+(d_width/7), y-(d_width-(d_width/3)),
-							accidental_x+(d_width/7), y+(d_width-(d_width/3)),
-							paint=self.stroke_paint,
-
-						)
-
-						sharp_vert2=cv.Line(
-							accidental_x-(d_width/7), y-(d_width-(d_width/3)),
-							accidental_x-(d_width/7), y+(d_width-(d_width/3)),
-							paint=self.stroke_paint,
-
-						)
-
-
-
-						return_list.append([sharp_line1,sharp_line2,sharp_vert1,sharp_vert2])
-
-					case "b":
-
-						#newcolor=copy.copy(self.stroke_paint)
-						#newcolor.color=ft.Colors.GREEN_ACCENT_400
-						
-						flat_vert1=cv.Line(
-							accidental_x-(d_width/20), y-(d_width-(d_width/5)),
-							accidental_x-(d_width/20), y+(d_width-(d_width/1.2)),
-							paint=self.stroke_paint,
-							)
-
-						flat_curve=cv.Path(
-							[
-								#starts here
-								cv.Path.MoveTo(accidental_x-(d_width/20), y+(d_width-(d_width/1.1))),
-								cv.Path.QuadraticTo(
-									accidental_x+(d_width*0.5),y-(d_width*0.2),#curve towards this point			
-									(accidental_x-(d_width/20 )),y+(d_width-(d_width*1.4)),#point to reach
-									1 #WEIGHT
-									),
-								cv.Path.Close(),
-							],
-							paint=self.stroke_paint,
-							)
-
-
-
-
-						return_list.append([flat_vert1,flat_curve])
-			
-
-					case "N":
-
-						nat_vert1=cv.Line(
-							accidental_x+(d_width/5), y-(d_width-(d_width/3)),
-							accidental_x+(d_width/5), y+(d_width-(d_width/3)),
-							paint=self.stroke_paint,
-
-						)
-
-						nat_vert2=cv.Line(
-							accidental_x-(d_width/5), y-(d_width-(d_width/3)),
-							accidental_x-(d_width/5), y+(d_width-(d_width/3)),
-							paint=self.stroke_paint,
-
-						)
-
-						cross_line=cv.Line(
-							accidental_x-(d_width/5), y-(d_width-(d_width/3)),
-							accidental_x+(d_width/5), y+(d_width-(d_width/3)),
-							paint=self.stroke_paint,
-
-						)
-
-						return_list.append([nat_vert1,nat_vert2,cross_line])
-						pass
-
-					case "##":
-						pass
-
-					case "bb":
-						pass
-
-
-
-			self.was_accidental=True
-		else:
-			self.was_accidental=False
-			self.accidental_to_jump=False
 
 		try:
 
@@ -1417,7 +1437,7 @@ class staff(Default_Widget):
 			print("setting index for next time!!")
 
 		except UnboundLocalError:
-			print("error no pos mult")
+			print("error 1647 ds")
 			pass
 
 
@@ -1456,6 +1476,35 @@ class staff(Default_Widget):
 				(self.width - self.right_margin)/7, self.top_margin/3,
 				paint=self.semi_transparent_paint
 				)
+
+
+
+
+		self.d_height=((self.top_margin + 1 * self.line_spacing)-(self.top_margin))*0.7
+		self.d_width=self.d_height*1.3  # Width of the oval
+		
+
+
+
+
+		if self.show_bass:
+
+			self.position=self.width // 7.5 
+			self.og_position=self.width // 7.5
+
+		else:
+			self.position=self.width // 2
+			self.og_position=self.width // 2
+
+
+
+
+
+
+
+
+
+
 
 
 
