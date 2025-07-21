@@ -835,7 +835,7 @@ class staff(Default_Widget):
 		self.accidentals={}
 		self.accidental_state={}
 
-		self.was_accidental=False
+
 		self.last_played_index=float('inf')#default int so that it never triggers first note
 
 
@@ -1078,7 +1078,7 @@ class staff(Default_Widget):
 			print(f"inner index: {inner_index}")
 			print(f"accidental: {i}")
 			print(f"accidental should be jumped {self.accidental_to_jump}")
-			if  (self.last_played_index-1)==index and self.was_accidental:
+			if  str(index+1) in self.accidentals:
 
 				#checks if an accidental is before it 
 				print(f"FOUND ACCIDENTAL BEFORE position multiplier: {position_mult}")
@@ -1243,19 +1243,6 @@ class staff(Default_Widget):
 
 				case "bb":
 					pass
-
-
-	#bug to fix
-	#	self.was_accidental=True
-	#else:
-	#	self.was_accidental=False
-	#	self.accidental_to_jump=False
-
-
-	
-
-
-
 
 
 		return return_list
