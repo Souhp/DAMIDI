@@ -4,3 +4,4 @@ maek a new functon for adding accidentlsso that it can be done after on the dict
  done
 
  mustfind a fix for get last index
+ 1241

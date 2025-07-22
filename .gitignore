@@ -168,3 +168,5 @@ Scripts/
 pyvenv.cfg
 mr_env/
 share/
+tester.py
+tester2.py

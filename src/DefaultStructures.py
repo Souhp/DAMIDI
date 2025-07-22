@@ -840,9 +840,7 @@ class staff(Default_Widget):
 
 
 		self.jumped=False#if the note was pushed to the side due to them being right next to each other
-		self.accidental_to_jump=False
-		self.accidental_jumped=False
-
+		self.jump_start=False
 		#for staff im saving the pitch list because i need to for ingame size change
 		self.pl=pl
 
@@ -913,20 +911,17 @@ class staff(Default_Widget):
 		
 
 		
-		for i in self.accidentals:
-			#simple for loop ^_^
-			print(f"the index {i}")
-			for i in self.make_accidental(i):
-				#oh no nested..but lists are short -_-
-				#should be good
-				for x in i:
-					##wtf have i done 0_0
-					self.canvas.shapes.append(x)
-	
 
 
 	 
-
+		self.make_accidentals()
+			#oh no nested..but lists are short -_-
+			#should be good
+		#	for x in i:
+				##wtf have i done 0_0
+				#self.canvas.shapes.append(x)
+		#		pass
+		
 		self.canvas.update
 
 
@@ -1042,208 +1037,181 @@ class staff(Default_Widget):
 		for i,x in self.note_dic.items():
 			print(f"key:{i},   item{x}:")
 
-	
-	def make_accidental(self,index):
-		
 
+
+
+	def assign_positions(self,row, index,prev_positions=None, width=5):
+		"""
+		Compute column positions for a single `row`, avoiding vertical stacking.
+
+		Automatically determines whether to stagger the first row based on the global `rows` list:
+		- If `prev_positions` is empty (first row) and `rows` has more than one row, use a step of 2 (staggered).
+		- Otherwise, use a step of 1 (contiguous).
+		- Single-item first rows always place at [0].
+
+		Parameters:
+		- row: list of items for the current row
+		- prev_positions: set of column indices used by the previous row (None for first row)
+		- width: total number of columns (indices 0..width-1)
+
+		Returns:
+		- curr_positions: list of column indices assigned to this row
+		"""
+		curr_positions = []
+		prev_positions = prev_positions or set()
+		print(f"prevous positions: {prev_positions}")
+		if not prev_positions:
+			# determine step based on global rows context
+			if len(row) == 1:
+				step = 1
+			else:
+				# stagger if multiple rows exist
+				step = 2 if (index-1 in self.accidentals or index+1 in self.accidentals) else 1
+
+			col = 0
+			for _ in row:
+				if col >= width:
+					raise ValueError("Not enough columns for first row spacing")
+				curr_positions.append(col)
+				col += step
+		else:
+			# avoid vertical stacking for subsequent rows
+			free_cols = [c for c in range(width) if c not in prev_positions]
+			if len(free_cols) < len(row):
+				raise ValueError("Not enough columns to avoid stacking")
+			curr_positions = free_cols[:len(row)]
+
+		return curr_positions
+	
+	def make_accidentals(self,width=5):
 		d_height=self.d_height	
 		d_width=self.d_width
 		position=self.position
 		og_position=self.og_position
-		y = self.top_margin + index/2 * self.line_spacing
 		return_list	=[]
+		width = 8
+		prev_positions = None
+		for i in self.accidentals:
+			row=self.accidentals[i]
+			curr = self.assign_positions(row, i,prev_positions, width)
+			prev_positions = set(curr)
 
-
-		print(f"list of accidentals->  {(self.accidentals[index])}")
-
-
-		side_count=0
-		tlen=len(self.accidentals[index])
-
-
-		for i in self.accidentals[index]:
-
-
-			#this var controls accidentals on the same index before retroactive spacing
-			inner_index=tlen-side_count
-
-
-			#this var controls accidentals on the same index before retroactive spacing
-			position_mult=inner_index
-			side_count+=1
-
+			count=0
+			y = self.top_margin + i/2 * self.line_spacing
 			
-			print(f"current index: {index}")
-			print(f"Last played index: {self.last_played_index}")
-			print(f"inner index: {inner_index}")
-			print(f"accidental: {i}")
-			print(f"accidental should be jumped {self.accidental_to_jump}")
-			if  str(index+1) in self.accidentals:
-
-				#checks if an accidental is before it 
-				print(f"FOUND ACCIDENTAL BEFORE position multiplier: {position_mult}")
-
-				#i could make an addition for third accidentals on the same index but nah for now
-
-
-
-
-
-
-				if inner_index==1:
-					if self.accidental_to_jump==True:
-
-						self.accidental_to_jump=False
-						position_mult+=1
-
-					else:
-						self.accidental_to_jump=True
-						print("aciidental should be jumpednext time")
-
-
-
-
-			
-
-
-			else:
+			for x in row:
+				position_mult=curr[count]
+				count+=1
+				print(f"positionmult: {position_mult}")
+				space_between=d_width/2
+				accidental_x=(og_position+d_width/2)-((d_width*0.9)*int(position_mult))
 				
-				self.accidental_to_jump=True
-				#self.accidental_to_jump2=False
-				#self.accidental_jumped=False
-			
-			
+
+				#---------------------------------------#
+				#---------------------------------------#
 
 
 
+				match i:
+					case "#":
+						print("case FOUND")
+						#art for making sharps
+						
 
-			if inner_index>1:
+						sharp_line1 = cv.Line(
+							accidental_x+(d_width/3), y+((d_height/4)-d_height/7),
+							accidental_x-(d_width/3), y+(d_height/4),
+							paint=self.stroke_paint,
 
-
-				if self.accidental_to_jump==True:
-					#position_mult+=1
-					pass
-				print(f"index-1:{(index-1)}")
-				if (index-1) in self.accidentals:
-					#could check for third accidental here
-					#if len(self.accidentals[index+1]) > x ect...
-					#but i assume only 2 for now
-					print("has note ontop!!!!!!")
-					position_mult+=1
-
-
-
-			space_between=d_width/2
-			accidental_x=(og_position+d_width/2)-((d_width*0.9)*position_mult)
-
-
-			#---------------------------------------#
-			#---------------------------------------#
-
-
-			
-
-			match i:
-				case "#":
-					print("case FOUND")
-					#art for making sharps
-					
-
-					sharp_line1 = cv.Line(
-						accidental_x+(d_width/3), y+((d_height/4)-d_height/7),
-						accidental_x-(d_width/3), y+(d_height/4),
-						paint=self.stroke_paint,
-
-					)
-
-					sharp_line2 = cv.Line(
-						accidental_x+(d_width/3), y-((d_height/4)+d_height/7),
-						accidental_x-(d_width/3), y-(d_height/4),
-						paint=self.stroke_paint,
-
-					)						
-
-					sharp_vert1=cv.Line(
-						accidental_x+(d_width/7), y-(d_width-(d_width/3)),
-						accidental_x+(d_width/7), y+(d_width-(d_width/3)),
-						paint=self.stroke_paint,
-
-					)
-
-					sharp_vert2=cv.Line(
-						accidental_x-(d_width/7), y-(d_width-(d_width/3)),
-						accidental_x-(d_width/7), y+(d_width-(d_width/3)),
-						paint=self.stroke_paint,
-
-					)
-
-
-
-					return_list.append([sharp_line1,sharp_line2,sharp_vert1,sharp_vert2])
-
-				case "b":
-
-					#newcolor=copy.copy(self.stroke_paint)
-					#newcolor.color=ft.Colors.GREEN_ACCENT_400
-					
-					flat_vert1=cv.Line(
-						accidental_x-(d_width/20), y-(d_width-(d_width/5)),
-						accidental_x-(d_width/20), y+(d_width-(d_width/1.2)),
-						paint=self.stroke_paint,
 						)
 
-					flat_curve=cv.Path(
-						[
-							#starts here
-							cv.Path.MoveTo(accidental_x-(d_width/20), y+(d_width-(d_width/1.1))),
-							cv.Path.QuadraticTo(
-								accidental_x+(d_width*0.5),y-(d_width*0.2),#curve towards this point			
-								(accidental_x-(d_width/20 )),y+(d_width-(d_width*1.4)),#point to reach
-								1 #WEIGHT
-								),
-							cv.Path.Close(),
-						],
-						paint=self.stroke_paint,
+						sharp_line2 = cv.Line(
+							accidental_x+(d_width/3), y-((d_height/4)+d_height/7),
+							accidental_x-(d_width/3), y-(d_height/4),
+							paint=self.stroke_paint,
+
+						)						
+
+						sharp_vert1=cv.Line(
+							accidental_x+(d_width/7), y-(d_width-(d_width/3)),
+							accidental_x+(d_width/7), y+(d_width-(d_width/3)),
+							paint=self.stroke_paint,
+
+						)
+
+						sharp_vert2=cv.Line(
+							accidental_x-(d_width/7), y-(d_width-(d_width/3)),
+							accidental_x-(d_width/7), y+(d_width-(d_width/3)),
+							paint=self.stroke_paint,
+
 						)
 
 
 
+						return_list.append([sharp_line1,sharp_line2,sharp_vert1,sharp_vert2])
 
-					return_list.append([flat_vert1,flat_curve])
-		
+					case "b":
 
-				case "N":
+						#newcolor=copy.copy(self.stroke_paint)
+						#newcolor.color=ft.Colors.GREEN_ACCENT_400
+						
+						flat_vert1=cv.Line(
+							accidental_x-(d_width/20), y-(d_width-(d_width/5)),
+							accidental_x-(d_width/20), y+(d_width-(d_width/1.2)),
+							paint=self.stroke_paint,
+							)
 
-					nat_vert1=cv.Line(
-						accidental_x+(d_width/5), y-(d_width-(d_width/3)),
-						accidental_x+(d_width/5), y+(d_width-(d_width/3)),
-						paint=self.stroke_paint,
+						flat_curve=cv.Path(
+							[
+								#starts here
+								cv.Path.MoveTo(accidental_x-(d_width/20), y+(d_width-(d_width/1.1))),
+								cv.Path.QuadraticTo(
+									accidental_x+(d_width*0.5),y-(d_width*0.2),#curve towards this point			
+									(accidental_x-(d_width/20 )),y+(d_width-(d_width*1.4)),#point to reach
+									1 #WEIGHT
+									),
+								cv.Path.Close(),
+							],
+							paint=self.stroke_paint,
+							)
 
-					)
 
-					nat_vert2=cv.Line(
-						accidental_x-(d_width/5), y-(d_width-(d_width/3)),
-						accidental_x-(d_width/5), y+(d_width-(d_width/3)),
-						paint=self.stroke_paint,
 
-					)
 
-					cross_line=cv.Line(
-						accidental_x-(d_width/5), y-(d_width-(d_width/3)),
-						accidental_x+(d_width/5), y+(d_width-(d_width/3)),
-						paint=self.stroke_paint,
+						return_list.append([flat_vert1,flat_curve])
+			
 
-					)
+					case "N":
 
-					return_list.append([nat_vert1,nat_vert2,cross_line])
-					pass
+						nat_vert1=cv.Line(
+							accidental_x+(d_width/5), y-(d_width-(d_width/3)),
+							accidental_x+(d_width/5), y+(d_width-(d_width/3)),
+							paint=self.stroke_paint,
 
-				case "##":
-					pass
+						)
 
-				case "bb":
-					pass
+						nat_vert2=cv.Line(
+							accidental_x-(d_width/5), y-(d_width-(d_width/3)),
+							accidental_x-(d_width/5), y+(d_width-(d_width/3)),
+							paint=self.stroke_paint,
 
+						)
+
+						cross_line=cv.Line(
+							accidental_x-(d_width/5), y-(d_width-(d_width/3)),
+							accidental_x+(d_width/5), y+(d_width-(d_width/3)),
+							paint=self.stroke_paint,
+
+						)
+
+						return_list.append([nat_vert1,nat_vert2,cross_line])
+						pass
+
+					case "##":
+						pass
+
+					case "bb":
+						pass
 
 		return return_list
 
