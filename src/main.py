@@ -13,7 +13,7 @@ tracemalloc.start()
 
 
 initialized_class= None
-Midi_Name = "ForFl 2"
+Midi_Name = "loopMIDI1 3"
 setting_page_inst = Settings_Page.settings()
 
 

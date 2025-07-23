@@ -28,7 +28,7 @@ class App_Inst(Default_Page):
 		self.cd = chord_display()
 		self.id=interval_display()
 		self.piano = visual_piano()
-		self.staff = staff(300,120,40,30,False,False)
+		self.staff = staff(0.3,1,0.4,False,False)
 		self.name = "chordID"
 
 		##WARINING

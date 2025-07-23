@@ -49,7 +49,7 @@ class Default_Widget():
 		self.scale_name = "C"
 		self.page_size = {"x":1600,"y":400}
 
-	def resize(self):
+	async def resize(self):
 		print("timetoresize")
 
 	def midi_to_scale_note(self,pitch):
@@ -597,7 +597,7 @@ class staff(Default_Widget):
 
 
 
-	def __init__(self, width_scale=1, height_scale=1,stroke_width=30,show_bass=True,show_line=True):
+	def __init__(self, width_scale=1, height_scale=1,stroke_scale=1,show_bass=True,show_line=True):
 		super().__init__()
 
 		
@@ -605,7 +605,7 @@ class staff(Default_Widget):
 		self.show_bass=show_bass
 		self.note_dic={}
 		self.pl=[]
-		
+		self.stroke_scale=stroke_scale
 		
 
 
@@ -657,7 +657,8 @@ class staff(Default_Widget):
 			stroke_width=11
 		)
 		self.stroke_paint = ft.Paint(
-			stroke_width=6,
+			stroke_width=(((self.page_size["y"]*0.01)-(self.height*0.007))*self.stroke_scale)
+,
 			style=ft.PaintingStyle.STROKE,
 			color=ft.Colors.BLACK
 		)
@@ -720,7 +721,7 @@ class staff(Default_Widget):
 		# Create the canvas with staff lines + dot
 		self.canvas = cv.Canvas(
 			self.staff_lines+([self.noteline] if self.show_line else []),
-			width=(self.width if self.show_bass !=True else self.width),
+			width=self.width,
 			height=self.height,
 		#	expand=True
 		)
@@ -1427,13 +1428,13 @@ class staff(Default_Widget):
 		self.canvas.width=self.width
 		self.canvas.height=self.height+self.top_margin
 		self.line_spacing = (self.height/self.num_lines)-(self.height*0.013)
-		self.stroke_paint.stroke_width=(self.page_size["y"]*0.01)-(self.height*0.007)
+		self.stroke_paint.stroke_width=(((self.page_size["y"]*0.01)-(self.height*0.007))*self.stroke_scale)
 		self.left_margin = self.width*0.01
 		self.right_margin = self.width*0.02
 
 
 
-		self.semi_transparent_paint.stroke_width=(self.page_size["y"]*0.03)-(self.height*0.007)
+		self.semi_transparent_paint.stroke_width=((self.page_size["y"]*0.03)-(self.height*0.007))*self.stroke_scale
 		self.noteline = cv.Line(
 				(self.width - self.right_margin)/7, self.height+self.top_margin/2,
 				(self.width - self.right_margin)/7, self.top_margin/3,
