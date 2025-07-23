@@ -914,12 +914,11 @@ class staff(Default_Widget):
 
 
 	 
-		self.make_accidentals()
-			#oh no nested..but lists are short -_-
-			#should be good
-		#	for x in i:
-				##wtf have i done 0_0
-				#self.canvas.shapes.append(x)
+		canvas_art=self.make_accidentals()
+		print("adding_art")
+		for x in canvas_art:
+			for y in x:
+				self.canvas.shapes.append(y)
 		#		pass
 		
 		self.canvas.update
@@ -1066,7 +1065,12 @@ class staff(Default_Widget):
 				step = 1
 			else:
 				# stagger if multiple rows exist
-				step = 2 if (index-1 in self.accidentals or index+1 in self.accidentals) else 1
+				if (index-1 in self.accidentals): 
+					step = 2 
+					print("stepping 2 AAAAA")
+				else:
+					print("steppa only 1 AAAAAA")
+					step=1
 
 			col = 0
 			for _ in row:
@@ -1093,6 +1097,10 @@ class staff(Default_Widget):
 		prev_positions = None
 		for i in self.accidentals:
 			row=self.accidentals[i]
+			if (i+1 not in self.accidentals):
+				prev_positions = None
+
+
 			curr = self.assign_positions(row, i,prev_positions, width)
 			prev_positions = set(curr)
 
@@ -1100,7 +1108,7 @@ class staff(Default_Widget):
 			y = self.top_margin + i/2 * self.line_spacing
 			
 			for x in row:
-				position_mult=curr[count]
+				position_mult=curr[count]+1
 				count+=1
 				print(f"positionmult: {position_mult}")
 				space_between=d_width/2
@@ -1112,7 +1120,7 @@ class staff(Default_Widget):
 
 
 
-				match i:
+				match x:
 					case "#":
 						print("case FOUND")
 						#art for making sharps
