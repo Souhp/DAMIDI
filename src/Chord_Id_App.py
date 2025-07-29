@@ -17,7 +17,7 @@ class App_Inst(Default_Page):
 
 		super().__init__()
 		#self.body.update()
-		
+		self.body.expand=True
 
 
 		##EVENTUALLY I WILL ADD A BETTER WAY TO ADD AND NOT ADD WIDGETS BUT FOR NOW ALL OF THEM WILL BE ADDED##
@@ -37,7 +37,7 @@ class App_Inst(Default_Page):
 		#self.side_menu.items=[]
 
 		self.body.controls[0].content = ft.Column(
-			alignment=ft.MainAxisAlignment.CENTER,
+			#alignment=ft.MainAxisAlignment.CENTER,
 			horizontal_alignment=ft.CrossAxisAlignment.CENTER,
 			controls=[
 				ft.Row(controls=[
@@ -61,6 +61,12 @@ class App_Inst(Default_Page):
 					]
 
 					),
+				#spacer
+				ft.Container(
+					expand=True
+
+
+				),
 
 				ft.Container(
 					self.id.Wbody,
@@ -69,7 +75,10 @@ class App_Inst(Default_Page):
 				ft.Container(
 					self.piano.Wbody,
 					bgcolor=ft.Colors.RED_50,
-					alignment=ft.alignment.center),		
+					alignment=ft.alignment.bottom_center,
+					#expand=True,
+					),
+
 				]
 
 			)

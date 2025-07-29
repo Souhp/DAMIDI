@@ -262,13 +262,13 @@ class Default_Page():
 
 
 class chord_display(Default_Widget):
-	def __init__(self):
+	def __init__(self,scale=1):
 		super().__init__()
 		self.current_root = None
 		self.current_chord = None
 		self.nlo_c = []
 		self.nl_c = []
-
+		self.textScale=scale
 
 
 		self.Chord_Body = ft.Container(
@@ -322,6 +322,8 @@ class chord_display(Default_Widget):
 	def update_func(self, nl, nlo, chordList, parts_list):
 
 		if chordList:
+			self.textMult = ((min(self.page_size["y"], self.page_size["x"])) * self.textScale)/100
+
 			self.nlo_c = nlo
 			self.nl_c = nl
 
@@ -333,30 +335,50 @@ class chord_display(Default_Widget):
 			self.current_root = parts_list[0]["temp_root"]
 
 			self.Chord_Body.content.controls[0].content.controls.append(
-				ft.Text(self.current_root, size=200, weight=ft.FontWeight.BOLD)
+				ft.Text(self.current_root, size=20*self.textMult, weight=ft.FontWeight.BOLD)
 			)
 			self.Chord_Body.content.controls[0].content.controls.append(
-				ft.Text(parts_list[0]["quality"], size=150, italic=True)
+				ft.Text(parts_list[0]["quality"], size=15*self.textMult, italic=True)
 			)
 			if parts_list[0]["root"] != self.current_root:
 				self.Chord_Body.content.controls[0].content.controls.append(
-					ft.Text(f"/{parts_list[0]['root']}", size=170)
+					ft.Text(f"/{parts_list[0]['root']}", size=170*self.textMult)
 				)
 
 			for i in parts_list[1:]:
 				extra_chord_row=ft.Row(alignment=ft.MainAxisAlignment.END)
 				self.Chord_Body.content.controls[1].content.controls.append(extra_chord_row)
 				extra_chord_row.controls.append(
-					ft.Text((i["temp_root"]), size=50, weight=ft.FontWeight.BOLD)
+					ft.Text((i["temp_root"]), size=5*self.textMult, weight=ft.FontWeight.BOLD)
 				)
 				extra_chord_row.controls.append(
-					ft.Text((i["quality"]), size=40, italic=True)
+					ft.Text((i["quality"]), size=4*self.textMult, italic=True)
 				)
 				if i["root"] != i["temp_root"]:
 					extra_chord_row.controls.append(
-						ft.Text(f"/{i['root']}", size=45)
+						ft.Text(f"/{i['root']}", size=4.5*self.textMult)
 					)
 
+	async def resize(self):
+
+		print("timetoresizeCD")
+		self.textMult = ((min(self.page_size["y"], self.page_size["x"])) * self.textScale) / 100
+		bListLen=len(self.Chord_Body.content.controls[0].content.controls)
+
+		if bListLen>0:
+			self.Chord_Body.content.controls[0].content.controls[0].size=20*self.textMult
+			self.Chord_Body.content.controls[0].content.controls[1].size = 15 * self.textMult
+			if bListLen>2:
+				self.Chord_Body.content.controls[0].content.controls[2].size = 5* self.textMult
+
+		for i in self.Chord_Body.content.controls[1].content.controls:
+			bListLen2=len(i.controls)
+			i.controls[0].size=5*self.textMult
+			i.controls[1].size=4*self.textMult
+			if bListLen2>2:
+				i.controls[2].size=4.5*self.textMult
+
+		self.Wbody.update()
 
 
 
@@ -521,7 +543,7 @@ class visual_piano(Default_Widget):
 
 		self.Wbody = ft.Container(
 			content=black_key_stack,
-			alignment=ft.alignment.center,
+			alignment=ft.alignment.bottom_center,
 			bgcolor=ft.Colors.AMBER_100,
 		)
 
