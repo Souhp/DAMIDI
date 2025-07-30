@@ -42,13 +42,6 @@ class App_Inst(Default_Page):
 			controls=[
 				ft.Row(controls=[
 
-					ft.Container(
-						self.staff.Wbody,
-						bgcolor=ft.Colors.RED_50,
-						alignment=ft.alignment.center,
-						#expand=True,
-						padding=ft.padding.only(right=100)
-						),
 
 					ft.Container(
 						self.cd.Wbody,
@@ -61,7 +54,14 @@ class App_Inst(Default_Page):
 					]
 
 					),
-				#spacer
+				ft.Container(
+					self.staff.Wbody,
+					bgcolor=ft.Colors.RED_200,
+					alignment=ft.alignment.center_right,
+					# expand=True,
+					#padding=ft.padding.only(right=100)
+				),
+					#spacer
 				ft.Container(
 					expand=True
 

@@ -83,7 +83,7 @@ class Default_Page():
 
 
 
-	async def child_tick():
+	async def child_tick(self):
 		##This is where the child app does its visual updates
 		pass
 
@@ -754,8 +754,9 @@ class staff(Default_Widget):
 		self.t_row = ft.Row(
 			controls=[
 				ft.Container(
+					expand=True,
 					content=self.canvas,
-					# alignment=ft.alignment.center,
+					alignment=ft.alignment.center_right,
 					bgcolor=ft.Colors.WHITE,
 				),
 				
@@ -786,7 +787,7 @@ class staff(Default_Widget):
 				),
 			
 			],
-			# alignment=ft.MainAxisAlignment.CENTER,
+			alignment=ft.MainAxisAlignment.CENTER,
 			#spacing=(-self.width),
 
 		)
@@ -805,7 +806,7 @@ class staff(Default_Widget):
 
 
 									],
-								alignment=ft.MainAxisAlignment.START,
+								alignment=ft.MainAxisAlignment.END,
 								)
 
 
