@@ -1183,23 +1183,24 @@ class staff(Default_Widget):
 						return_list.append([sharp_line1,sharp_line2,sharp_vert1,sharp_vert2])
 
 					case "b":
+						print("only b")
 
 						#newcolor=copy.copy(self.stroke_paint)
 						#newcolor.color=ft.Colors.GREEN_ACCENT_400
 						
 						flat_vert1=cv.Line(
-							accidental_x-(d_width/20), y-(d_width-(d_width/5)),
-							accidental_x-(d_width/20), y+(d_width-(d_width/1.2)),
+							accidental_x-(d_width/20), y-(d_width-(d_width/4)),
+							accidental_x-(d_width/20), y+(d_width-(d_width/1.4)),
 							paint=self.stroke_paint,
 							)
 
 						flat_curve=cv.Path(
 							[
 								#starts here
-								cv.Path.MoveTo(accidental_x-(d_width/20), y+(d_width-(d_width/1.1))),
+								cv.Path.MoveTo(accidental_x-(d_width/20), y+(d_width-(d_width/1.3))),
 								cv.Path.QuadraticTo(
-									accidental_x+(d_width*0.5),y-(d_width*0.2),#curve towards this point			
-									(accidental_x-(d_width/20 )),y+(d_width-(d_width*1.4)),#point to reach
+									accidental_x+(d_width*0.6),y-(d_width*0.2),#curve towards this point
+									(accidental_x-(d_width/20 )),y+(d_width-(d_width*1.2)),#point to reach
 									1 #WEIGHT
 									),
 								cv.Path.Close(),
@@ -1216,22 +1217,22 @@ class staff(Default_Widget):
 					case "N":
 
 						nat_vert1=cv.Line(
-							accidental_x+(d_width/5), y-(d_width-(d_width/3)),
-							accidental_x+(d_width/5), y+(d_width-(d_width/3)),
+							accidental_x+(d_width/5), y-(d_width-(d_width/2)),
+							accidental_x+(d_width/5), y+(d_width-(d_width/2)),
 							paint=self.stroke_paint,
 
 						)
 
 						nat_vert2=cv.Line(
-							accidental_x-(d_width/5), y-(d_width-(d_width/3)),
-							accidental_x-(d_width/5), y+(d_width-(d_width/3)),
+							accidental_x-(d_width/5), y-(d_width-(d_width/2)),
+							accidental_x-(d_width/5), y+(d_width-(d_width/2)),
 							paint=self.stroke_paint,
 
 						)
 
 						cross_line=cv.Line(
-							accidental_x-(d_width/5), y-(d_width-(d_width/3)),
-							accidental_x+(d_width/5), y+(d_width-(d_width/3)),
+							accidental_x-(d_width/5), y-(d_width-(d_width/2)),
+							accidental_x+(d_width/5), y+(d_width-(d_width/2)),
 							paint=self.stroke_paint,
 
 						)
@@ -1240,9 +1241,65 @@ class staff(Default_Widget):
 						pass
 
 					case "##":
+
+						cross_line1=cv.Line(
+							accidental_x-(d_width/5), y-(d_width-(d_width/2)),
+							accidental_x+(d_width/5), y+(d_width-(d_width/2)),
+							paint=self.stroke_paint,
+							)
+						cross_line2=cv.Line(
+							accidental_x + (d_width / 5), y - (d_width - (d_width / 2)),
+							accidental_x - (d_width / 5), y + (d_width - (d_width / 2)),
+							paint=self.stroke_paint,
+
+							)
+						return_list.append([cross_line1,cross_line2])
 						pass
 
 					case "bb":
+						print("bb")
+						flat_vert1=cv.Line(
+							accidental_x-(d_width/2.3), y-(d_width-(d_width/4)),
+							accidental_x-(d_width/2.3), y+(d_width-(d_width/1.4)),
+							paint=self.stroke_paint,
+							)
+
+						flat_curve1=cv.Path(
+							[
+								#starts here
+								cv.Path.MoveTo(accidental_x-(d_width/2.3), y+(d_width-(d_width/1.3))),
+								cv.Path.QuadraticTo(
+									accidental_x+(d_width*0.27),y-(d_width*0.2),#curve towards this point
+									(accidental_x-(d_width/2.3)),y+(d_width-(d_width*1.2)),#point to reach
+									1 #WEIGHT
+									),
+								cv.Path.Close(),
+							],
+							paint=self.stroke_paint,
+							)
+						flat_vert2=cv.Line(
+							accidental_x-(d_width/10), y-(d_width-(d_width/4)),
+							accidental_x-(d_width/10), y+(d_width-(d_width/1.4)),
+							paint=self.stroke_paint,
+							)
+
+						flat_curve2=cv.Path(
+							[
+								#starts here
+								cv.Path.MoveTo(accidental_x-(d_width/10), y+(d_width-(d_width/1.3))),
+								cv.Path.QuadraticTo(
+									accidental_x+(d_width*0.5),y-(d_width*0.2),#curve towards this point
+									(accidental_x-(d_width/10)),y+(d_width-(d_width*1.2)),#point to reach
+									1 #WEIGHT
+									),
+								cv.Path.Close(),
+							],
+							paint=self.stroke_paint,
+							)
+						return_list.append([flat_vert1,flat_curve1,flat_vert2,flat_curve2])
+
+
+
 						pass
 
 		return return_list
