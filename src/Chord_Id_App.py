@@ -35,25 +35,20 @@ class App_Inst(Default_Page):
 		self.widgets=[self.cd,self.id,self.piano,self.staff]
 
 		#self.side_menu.items=[]
-
+		self.body.expand=True
 		self.body.controls[0].content = ft.Column(
+
 			#alignment=ft.MainAxisAlignment.CENTER,
 			horizontal_alignment=ft.CrossAxisAlignment.CENTER,
 			controls=[
-				ft.Row(controls=[
 
+				ft.Container(
+					self.cd.Wbody,
+					bgcolor=ft.Colors.RED_50,
+					alignment=ft.alignment.center,
+					expand=True,
 
-					ft.Container(
-						self.cd.Wbody,
-						bgcolor=ft.Colors.RED_50,
-						alignment=ft.alignment.center,
-						expand=True,
-						),					
-
-
-					]
-
-					),
+				),
 				ft.Container(
 					self.staff.Wbody,
 					bgcolor=ft.Colors.RED_200,
@@ -63,7 +58,7 @@ class App_Inst(Default_Page):
 				),
 					#spacer
 				ft.Container(
-					expand=True
+					#expand=True
 
 
 				),
@@ -159,6 +154,19 @@ class App_Inst(Default_Page):
 		
 		elapsed = (time.time() - start_time) * 1000  # milliseconds
 		print(f"update_func preTOTAL(after piano) took {elapsed:.2f} ms")
+
+		##for staff
+		pl =[]
+		print(f"self.ml.active_notes: {self.ml.active_notes.keys()}")
+		for pitch in sorted(self.ml.active_notes.keys()):
+			print(f"pitch: {pitch}")
+			pl.append(pitch)
+
+
+		await self.staff.update_func(pl)
+		self.staff.Wbody.update()
+
+
 		#self.All_Content.update()
 		self.last_keys=nlo
 

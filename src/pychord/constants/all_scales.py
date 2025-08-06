@@ -43,7 +43,7 @@ minor_scales = {
 }
 
 chromatic_major_scales = {
-    "C":  ["Cbb", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"],
+    "C":  ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "G#", "A", "Bb", "B"],
 
     "G":  ["C", "C#", "D", "D#", "E", "F", "F#", "F##", "G#", "A", "A#", "B"],
     "D":  default_chromatic,

@@ -40,10 +40,6 @@ async def main(page: ft.Page):
 
 
 
-    
-
-
-
 
 
 
@@ -111,6 +107,7 @@ async def main(page: ft.Page):
     await register_event("total_update",total_update)
     await register_event("change_scale",change_scale)
     await register_event("size_update",all_size_update)
+
 
     page.controls.append(currentPage.content)
     #alignment=ft.MainAxisAlignment.CENTER,

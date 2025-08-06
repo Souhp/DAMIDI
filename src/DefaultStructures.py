@@ -292,7 +292,7 @@ class chord_display(Default_Widget):
 
 
 						bgcolor=ft.Colors.GREEN,
-						#expand=True,  
+						#expand=True,
 						),
 
 					],
@@ -306,13 +306,14 @@ class chord_display(Default_Widget):
 
 			bgcolor=ft.Colors.GREEN_ACCENT_700,
 			alignment=ft.alignment.center,
+
 		)
 
 		self.Wbody = ft.Container(
 			ft.Column(
 				horizontal_alignment=ft.CrossAxisAlignment.CENTER,
 				alignment=ft.MainAxisAlignment.CENTER,
-				controls=[self.Chord_Body,],
+				controls=[self.Chord_Body],
 			),
 			bgcolor=ft.Colors.AMBER_500,
 			alignment=ft.alignment.center,
@@ -622,7 +623,7 @@ class staff(Default_Widget):
 	def __init__(self, width_scale=1, height_scale=1,stroke_scale=1,show_bass=True,show_line=True):
 		super().__init__()
 
-		
+		self.currentFile=None
 		self.canvas = cv.Canvas()
 		self.show_bass=show_bass
 		self.note_dic={}
@@ -818,7 +819,7 @@ class staff(Default_Widget):
 		f_options=[2,6]
 		f2_options=[3,6]
 
-		###sidebar options##
+		#######################sidebar options########################
 
 		self.from_field = ft.TextField(
 			value=f_options[0] if self.show_bass==True else f2_options[0],
@@ -841,14 +842,40 @@ class staff(Default_Widget):
 
 		)
 
+		def handle_file_result(e):
+			if e.files:
+
+				self.currentFile = e.files[0].path
+				print(self.currentFile)
+				textforbutton = self.currentFile if len(self.currentFile) < 15 else self.currentFile[:15]+"..."
+				filesButton.content.controls[0].controls[0].value = textforbutton
+				filesButton.update()
+			else:
+				filesButton.content.controls[0].controls[0].value = "NONE"
+				self.currentFile= None
+				filesButton.update()
+
+
+
+		pick_files_dialog = ft.FilePicker(on_result=handle_file_result)
+		#trigger_event("addToOverlay",pick_files_dialog)
+		filesButton=ft.ElevatedButton(
+			content=ft.Column(controls=[ft.Row(controls=[ft.Text(self.currentFile or "NONE",overflow=ft.TextOverflow.ELLIPSIS,expand_loose=True)],wrap=True)],wrap=True),
+			on_click=lambda _: pick_files_dialog.pick_files(allow_multiple=False, allowed_extensions=["mxl"]),
+		)
+		fileSelectRow=ft.Row(
+			alignment=ft.MainAxisAlignment.CENTER,
+
+			controls=[
+				pick_files_dialog,
+				ft.Text("MXML to read: ",weight=ft.FontWeight.BOLD),
+				filesButton,
+				]
+		)
 
 		self.sidebar_content.controls.append(range_row)
-
-
-
-
-	
-
+		self.sidebar_content.controls.append(fileSelectRow)
+		#lambda makes me do this after i think
 		self.from_field.on_change = lambda e: self.change_octave_field(self.to_field,self.from_field,self,"up")
 		self.to_field.on_change = lambda e: self.change_octave_field(self.from_field,self.to_field,self,"down")
 
@@ -1637,7 +1664,7 @@ class Sidebar(ft.Container):
 				height=1,
 				alignment=ft.alignment.center_right,
 				width=220,
-				expand=True,
+				#expand=True,
 			),
 
 
