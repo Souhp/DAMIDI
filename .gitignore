@@ -171,3 +171,4 @@ share/
 storage/
 pyvenv.cfg
 start_script.bat
+venv/

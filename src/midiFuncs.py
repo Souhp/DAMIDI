@@ -1,5 +1,4 @@
 from Event_Dispatch_Bus import trigger_event
-import re
 import asyncio
 from mido import open_input
 
@@ -34,12 +33,12 @@ class midi_listener():
 		with open_input(self.input_name) as inport:
 			while self.stop != True:
 				for msg in inport.iter_pending():
-					m = re.search(pattern, str(msg))
-					if not m:
-						continue
-
-					_, pitch, velocity, _ = map(int, m.groups())
-
+					print(("Whole message:", msg))
+					if msg.type in ("note_on", "note_off"):
+						pitch = msg.note
+						velocity = msg.velocity
+					else:
+						continue					
 					if velocity > 0:
 						self.active_notes[pitch] = velocity
 						self.updated = True
