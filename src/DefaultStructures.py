@@ -473,10 +473,12 @@ class visual_piano(Default_Widget):
 		self.key_map = {}
 		self.current_chord = ''
 
-		white_key_width = 24
-		white_key_height = 150
-		black_key_width = 16
-		black_key_height = 90
+		self.page_size["x"]
+
+		self.whiteKeyWidthScale=0.0125
+		self.whiteKeyHeightScale=0.78
+		self.blackKeyWidthScale=0.0083
+		self.blackKeyHeightScale=0.0459
 		black_key_positions = {1, 3, 6, 8, 10}
 
 		if num_keys > 88 or num_keys < 1:
@@ -495,6 +497,11 @@ class visual_piano(Default_Widget):
 		black_keys = []
 		white_index = 0
 
+		Bwidth=self.page_size["x"] * self.blackKeyWidthScale
+		Bheight=self.page_size["y"] * self.blackKeyHeightScale
+		Wwidth=self.page_size["x"] * self.whiteKeyWidthScale
+		Wheight=self.page_size["y"] * self.whiteKeyHeightScale
+			
 		for i in range(num_keys):
 			midi_num = start_midi + i
 			note_index = midi_num % 12
@@ -503,10 +510,10 @@ class visual_piano(Default_Widget):
 
 			if is_black:
 				key = ft.Container(
-					width=black_key_width,
-					height=black_key_height,
+					width=Bwidth,
+					height=Bheight,
 					bgcolor=ft.Colors.BLACK,
-					left=white_index * white_key_width - (black_key_width // 2),
+					left=white_index * Wwidth - (Bwidth // 2),
 					top=0,
 					border_radius=2,
 					data={"note": full_note, "is_white": False},
@@ -514,8 +521,8 @@ class visual_piano(Default_Widget):
 				black_keys.append(key)
 			else:
 				key = ft.Container(
-					width=white_key_width,
-					height=white_key_height,
+					width=Wwidth,
+					height=Wheight,
 					bgcolor=ft.Colors.WHITE,
 					border=ft.border.all(1, ft.Colors.BLACK),
 					content=ft.Text(full_note, size=8, color=ft.Colors.BLACK),
@@ -526,33 +533,36 @@ class visual_piano(Default_Widget):
 				white_index += 1
 
 			self.key_map[full_note] = key
-
+		self.numOfWhiteKeys=len(white_keys)
 		white_key_row = ft.Row(controls=white_keys, spacing=0)
 
-		black_key_stack = ft.Stack(
+		self.black_key_stack = ft.Stack(
 			controls=[
 				ft.Container(
 					content=white_key_row,
-					width=white_key_width * len(white_keys),
-					height=white_key_height,
+					width=Wwidth * self.numOfWhiteKeys,
+					height=Wheight,
 				),
 				*black_keys
 			],
-			width=white_key_width * len(white_keys),
-			height=white_key_height,
+			width=Wwidth * self.numOfWhiteKeys,
+			height=Wheight,
 		)
 
 		self.Wbody = ft.Container(
-			content=black_key_stack,
+			content=self.black_key_stack,
 			alignment=ft.alignment.bottom_center,
 			bgcolor=ft.Colors.AMBER_100,
+			expand=False,
+			#height=Wheight*1.2,
 		)
+		
 
 
 
 	def update_func(self, nl, nlo, chordList, parts_list, last_chord_notes, last_chord_notes_0, new_nlo, ntp, last_root,last_keys):
 		
-		
+
 		nlast_keys= last_keys    
 		print("=== DEBUG ===")
 		print("chordList:", chordList)
@@ -574,7 +584,8 @@ class visual_piano(Default_Widget):
 
 
 
-		# --- Reset all keys first ---
+		# --- Resizes and Resets all keys first ---
+		
 		for note, key in self.key_map.items():
 			key.bgcolor = ft.Colors.WHITE if key.data["is_white"] else ft.Colors.BLACK
 
@@ -587,10 +598,40 @@ class visual_piano(Default_Widget):
 
 		
 
-
+	
 
 		#SIDEBAR OPTIONS##
 		#self.sidebar_content.controls.append(self.staff.sidebar_content)
+
+	async def resize(self):
+		print("RESIZING PIANO")
+		Bwidth=self.page_size["x"] * self.blackKeyWidthScale
+		Bheight=self.page_size["y"] * self.blackKeyHeightScale
+		Wwidth=self.page_size["x"] * self.whiteKeyWidthScale
+		Wheight=self.page_size["y"] * self.whiteKeyHeightScale
+		
+		white_index=0
+		for note, key in self.key_map.items():
+			if key.data["is_white"]:
+				key.width=Wwidth
+				key.height=Wheight
+				white_index+=1
+
+			else:
+				key.left=white_index * Wwidth - (Bwidth // 2)
+				key.width=Bwidth
+				key.height=Bheight
+
+
+		self.black_key_stack.controls[0].width=Wwidth * self.numOfWhiteKeys
+
+		self.black_key_stack.controls[0].height=Wheight
+
+		self.black_key_stack.width=Wwidth * self.numOfWhiteKeys
+
+		self.black_key_stack.height=Wheight
+		#self.Wbody.height=Wheight*1.2
+		self.Wbody.update()
 
 class staff(Default_Widget):
 
