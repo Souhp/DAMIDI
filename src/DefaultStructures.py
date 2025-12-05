@@ -542,7 +542,7 @@ class visual_piano(Default_Widget):
 					content=white_key_row,
 					width=Wwidth * self.numOfWhiteKeys,
 					height=Wheight,
-					,
+					
 				),
 				*black_keys
 			],
