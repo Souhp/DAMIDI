@@ -476,7 +476,7 @@ class visual_piano(Default_Widget):
 		self.page_size["x"]
 
 		self.whiteKeyWidthScale=0.0125
-		self.whiteKeyHeightScale=0.78
+		self.whiteKeyHeightScale=0.078
 		self.blackKeyWidthScale=0.0083
 		self.blackKeyHeightScale=0.0459
 		black_key_positions = {1, 3, 6, 8, 10}
@@ -542,6 +542,7 @@ class visual_piano(Default_Widget):
 					content=white_key_row,
 					width=Wwidth * self.numOfWhiteKeys,
 					height=Wheight,
+					,
 				),
 				*black_keys
 			],
@@ -552,8 +553,7 @@ class visual_piano(Default_Widget):
 		self.Wbody = ft.Container(
 			content=self.black_key_stack,
 			alignment=ft.alignment.bottom_center,
-			bgcolor=ft.Colors.AMBER_100,
-			expand=False,
+			bgcolor=ft.Colors.GREEN,	
 			#height=Wheight*1.2,
 		)
 		
