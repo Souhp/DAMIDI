@@ -193,8 +193,9 @@ class Default_Page():
 			)
 
 		self.Header = ft.Container(ft.Row(controls=[self.Back_Button,ft.Container(expand=True),self.side_menu_button]),bgcolor=ft.Colors.GREEN_50)
-
-
+		global globHeader
+		globHeader = self.Header
+		
 
 
 		self.body=ft.Stack(
@@ -891,6 +892,11 @@ class staff(Default_Widget):
 				textforbutton = self.currentFile if len(self.currentFile) < 15 else self.currentFile[:15]+"..."
 				filesButton.content.controls[0].controls[0].value = textforbutton
 				filesButton.update()
+
+				###time to add the buttons on the top###
+
+				globHeader.content.controls.insert(1,ft.ElevatedButton(content=ft.Text("PLAY"), on_click=lambda e: ))
+				globHeader.update()
 			else:
 				filesButton.content.controls[0].controls[0].value = "NONE"
 				self.currentFile= None
