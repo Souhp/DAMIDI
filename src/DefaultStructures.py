@@ -895,7 +895,7 @@ class staff(Default_Widget):
 
 				###time to add the buttons on the top###
 
-				globHeader.content.controls.insert(1,ft.ElevatedButton(content=ft.Text("PLAY"), on_click=lambda e: ))
+				globHeader.content.controls.insert(1,ft.ElevatedButton(content=ft.Text("PENIS")))
 				globHeader.update()
 			else:
 				filesButton.content.controls[0].controls[0].value = "NONE"
