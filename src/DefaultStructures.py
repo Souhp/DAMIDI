@@ -12,8 +12,37 @@ from collections import namedtuple
 default_scale={"C":  ["C", "D", "E", "F", "G", "A", "B"]}
 import math
 import copy
+from mxmlParser import parse_musicxml_chords
+import time
 
 
+class Timer:
+    def __init__(self, duration_seconds):
+        self.duration = duration_seconds
+        self.start_time = None
+        self.finished = False
+
+    def start(self):
+        self.start_time = time.monotonic()
+        self.finished = False
+
+    def tick(self):
+        if self.start_time is None or self.finished:
+            return
+
+        elapsed = time.monotonic() - self.start_time
+
+        if elapsed >= self.duration:
+            self.finished = True
+            self.on_finish()
+
+    def remaining(self):
+        if self.start_time is None:
+            return self.duration
+        return max(0, self.duration - (time.monotonic() - self.start_time))
+
+    def on_finish(self):
+        print("Timer finished")
 
 class SizeAwareControl(cv.Canvas):
 	def __init__(self, content=None, resize_interval=100, on_resize=None, **kwargs):
@@ -41,6 +70,11 @@ class SearchField:
 
 class Default_Widget():
 
+
+	async def tick(self):
+		pass
+
+
 	def __init__(self):
 
 		self.sidebar_content=ft.Column(horizontal_alignment=ft.CrossAxisAlignment.CENTER)
@@ -51,6 +85,7 @@ class Default_Widget():
 
 	async def resize(self):
 		print("timetoresize")
+
 
 	def midi_to_scale_note(self,pitch):
 
@@ -112,6 +147,9 @@ class Default_Page():
 
 	async def tick(self,name):
 		while True:
+
+			for i in self.widgets:
+				await i.tick()
 			#print(f"tick update")
 
 			if self.ml.updated == True:
@@ -149,13 +187,16 @@ class Default_Page():
 		self.Active_Note_Dict={}
 		self.tick_time = tick_time
 		self.ml = midi_listener(midi_input)
+		
 
+
+
+		####
 		if midi_input==None:
 			raise ValueError("GAY No MIDI INPUT")
 
 		else:
 			#await asyncio.sleep(5)
-			asyncio.create_task(self.tick("fuk1"))
 			asyncio.create_task(self.ml.listen())
 
 			#self.listener= await midi_listener(midi_input)
@@ -164,7 +205,8 @@ class Default_Page():
 			#    midi_data = await asyncio.wait_for(midi_queue.get(),timeout=0.01)
 			#    for i,k in midi_data:
 			#        print("NOTE LIST FOR APP: ",i)
-
+		
+		asyncio.create_task(self.tick("fuk1"))
 
 	def __init__(self):
 
@@ -637,9 +679,190 @@ class visual_piano(Default_Widget):
 class staff(Default_Widget):
 
 
+	def compute_lookahead_seconds(
+		self,
+		screen_width_px,
+		pixels_per_second,
+		buffer_seconds=0.1
+	):
+		"""
+		Returns how many seconds ahead we should look.
+		"""
+
+		visible_seconds = screen_width_px / pixels_per_second
+		return visible_seconds + buffer_seconds
+
+	def get_events_lookahead_and_place(
+		self,
+		total_time,
+		countdown_time,
+		look_ahead_sec,
+		include_bars=False,
+		events=None
+		
+	):
+		"""
+		Amortized O(1) lookahead.
+		Bars are structural events and handled explicitly.
+		"""
+		screen_width=self.canvas.width
+		pixels_per_second=self.pixels_per_second
+		
+
+
+		current_time = total_time - countdown_time
+		window_end = current_time + look_ahead_sec
+
+		if events is None:
+			events = self.current_event
+
+		result = []
+
+		n = len(events)
+		i = self.event_index
+		commit_i = i
+
+		while i < n:
+			event = events[i]
+			etype = event.get("type")
+
+			# ---------- BAR HANDLING ----------
+			if etype == "bar":
+				if include_bars:
+					result.append(event)
+				# bars do NOT advance commit_i
+				i += 1
+				continue
+
+			# ---------- TIMED EVENTS ----------
+			start = event.get("start_sec")
+			if start is None:
+				# malformed timed event → skip safely
+				i += 1
+				continue
+
+			start = float(start)
+
+			# permanently skip past events
+			if start < current_time:
+				commit_i = i + 1
+
+			# inside lookahead window
+			elif start < window_end:
+
+				#append x position	
+				event['x_position']=screen_width - ((start- countdown_time)*self.pixels_per_second)
+
+
+				result.append(event)
+
+			# future event → stop scanning
+			else:
+				break
+
+			i += 1
+
+		# only skip events that are definitely in the past
+		self.event_index = commit_i
+
+		return result
+
+	def create_dumb_events(self,events):
+
+
+		dumb_events=[]
+
+		for i in events:
+			event_type = i.get("type")
+			
+
+
+			if event_type == "bar":
+				
+				dumb_events.append({
+					"type": event_type,
+					})
+
+
+			elif event_type == "chord":
+				
+
+				pl=[]
+				pl_count=0
+				notes = i.get("notes", [])
+				accidentals_list={}
+				jumped=False
+				last_played_index=float('inf')
+				note_shapes_list=[]
+				
+				for note in notes:
+					## can use note.get('duration_div') to know the type of note ie: whole, half, ect...
+						
+					pitch = note.get('pitch')
+					pl.append(pitch)
+					
+
+				for pitch in pl:
+					pl_count+=1
 
 
 
+				#	takes pitch get scale note 
+					tscale_note=str(self.midi_to_scale_note(pitch))
+				
+					note_name = tscale_note[0]
+					note_octave = tscale_note[-1]
+					print(f"t scale note: {(note_name+note_octave)}")
+
+					new_scale_note=tscale_note[0]
+					tlen=len(tscale_note)
+					
+
+
+					#adds the note and remove the octave at the end
+					if tlen>3:
+						new_scale_note=new_scale_note+tscale_note[1]+tscale_note[2]
+
+					elif tlen>2:
+						new_scale_note=new_scale_note+tscale_note[1]
+
+
+
+
+
+
+					print(f"pitchaaa: {pitch}")
+				#	#self.not_dic has all the keys in the specified range and their position in the canvas
+				#	##if not in range it will not appear in the staff bc i dont have space it would look crazy
+					if str(note_name+note_octave) in self.note_dic:
+						
+
+						#scales like F# will have C## so to not have c,c#,c## we make c to b#.
+						#but my systems is crude and does not work like that. it just takes in an index and note
+						#so I have to switch it back for this function to let the staff know that this is the first appeance of B and not the last B in the scale
+						if new_scale_note=="B#":
+							index =self.note_dic[str(note_name+str(int(note_octave)-1))]	
+						else:
+							index =self.note_dic[str(note_name+note_octave)]
+
+						note_shapes,accidentals_list,jumped,last_played_index=self.make_note(
+							pl_count,
+							position=None,
+							index=index,
+							accidentals_list=accidentals_list,
+							new_scale_note=new_scale_note,
+							pitch_list=pl,
+							jumped=jumped,
+							last_played_index=last_played_index
+							)
+						note_shapes_list.append(note_shapes)
+				
+				dumb_events.append({
+					"type": event_type,
+					"shapes": [note_shapes_list,accidentals_list],
+					"start_sec":i.get('start_sec')
+				})
+		return dumb_events
 
 	def change_octave_field(self,x,y,z,param):
 		print("ss")
@@ -671,12 +894,11 @@ class staff(Default_Widget):
 		self.note_dic={}
 		self.pl=[]
 		self.stroke_scale=stroke_scale
-		
-
-
-
-
-
+		self.score_timer=None	
+		self.event_index=0
+		self.current_event=None
+		self.total_score_time_sec=0
+		self.pixels_per_second=240
 
 
 
@@ -893,6 +1115,22 @@ class staff(Default_Widget):
 				filesButton.content.controls[0].controls[0].value = textforbutton
 				filesButton.update()
 
+				
+				##parse music xml
+				events,self.total_score_time_sec = parse_musicxml_chords("/home/soup/Downloads/Fur_Elise/score.xml")
+				self.current_event=self.create_dumb_events(events)
+				
+				print(f"{len(self.current_event)} is dumb vs {len(events)} ")
+
+
+
+				self.score_timer= Timer(self.total_score_time_sec)
+
+				self.score_timer.start()
+				
+
+
+
 				###time to add the buttons on the top###
 
 				globHeader.content.controls.insert(1,ft.ElevatedButton(content=ft.Text("PENIS")))
@@ -908,7 +1146,7 @@ class staff(Default_Widget):
 		#trigger_event("addToOverlay",pick_files_dialog)
 		filesButton=ft.ElevatedButton(
 			content=ft.Column(controls=[ft.Row(controls=[ft.Text(self.currentFile or "NONE",overflow=ft.TextOverflow.ELLIPSIS,expand_loose=True)],wrap=True)],wrap=True),
-			on_click=lambda _: pick_files_dialog.pick_files(allow_multiple=False, allowed_extensions=["mxl"]),
+			on_click=lambda _: pick_files_dialog.pick_files(allow_multiple=False, allowed_extensions=["mxl","xml"]),
 		)
 		fileSelectRow=ft.Row(
 			alignment=ft.MainAxisAlignment.CENTER,
@@ -927,6 +1165,8 @@ class staff(Default_Widget):
 		self.to_field.on_change = lambda e: self.change_octave_field(self.from_field,self.to_field,self,"down")
 
 	async def update_func(self,pl):
+
+
 		#print(f"pitches list: {pl}")
 
 		#used in make note for staff notation
@@ -1386,7 +1626,7 @@ class staff(Default_Widget):
 
 
 
-	def make_note(self,pl_index,position=None,index=6):
+	def make_note(self,pl_index,position=None,index=6,accidentals_list=None,new_scale_note=None,pitch_list=None,jumped=None,last_played_index=None):
 		return_list=[]
 		
 		d_height=self.d_height	
@@ -1394,30 +1634,57 @@ class staff(Default_Widget):
 		position=self.position
 		og_position=self.og_position
 
+		if accidentals_list==None:
+			accidentals=self.accidentals
+		else:
+			
+			accidentals= accidentals_list.copy()
+		
+
+		if new_scale_note==None:
+			new_scale_note=self.new_scale_note
+	
+		if pitch_list==None:
+			pitch_list=self.pl
+		
+		
+
+		default_jump=False
+		if jumped==None:
+
+			default_jump=True	
+
+			jumped=self.jumped
+
+
+		default_last_played=False
+		if last_played_index==None:
+			default_last_played=True
+			last_played_index=self.last_played_index
+
 		l_count=0
 
-
+		
 		
 
 		print(f"Index is: {index}")
 
 
-
-
+		
 		y = self.top_margin + index/2 * self.line_spacing
 		
 
 		#logic for notes to appear ONTOP AND to the side if the notes are one note apart
-		if (self.last_played_index-1 == index and not self.jumped):
+		if (self.last_played_index-1 == index and not jumped):
 			position=position+(d_width*0.8)
-			self.jumped	=True
+			jumped	=True
 		#logic for notes to appear to the side of the same note if the notes are the same but different suffix ie: C and C#
-		elif (self.last_played_index == index) and not self.jumped:
+		elif (self.last_played_index == index) and not jumped:
 			position=position+d_width
-			self.jumped =True
+			jumped =True
 
 		else:
-			self.jumped=False
+			jumped=False
 
 
 		x =  position
@@ -1458,7 +1725,7 @@ class staff(Default_Widget):
 
 		##basically managing all the accidentals 
 
-		accidental=self.accidental_type(self.new_scale_note,always_accidental=False)
+		accidental=self.accidental_type(new_scale_note,always_accidental=False)
 
 		if accidental==None:
 
@@ -1467,11 +1734,11 @@ class staff(Default_Widget):
 
 
 			#case: when   #@[@]<-new note
-			if index in self.accidentals:
-				t_accidental =self.accidental_type(self.new_scale_note,always_accidental=True)
-				t_list=self.accidentals[index]
+			if index in accidentals:
+				t_accidental =self.accidental_type(new_scale_note,always_accidental=True)
+				t_list=accidentals[index]
 				t_list.append(t_accidental)
-				self.accidentals[index]=t_list
+				accidentals[index]=t_list
 
 			else:
 
@@ -1484,27 +1751,27 @@ class staff(Default_Widget):
 				index_to_change=index
 				for i in ranged_list:
 					index_to_change+=7
-					if index_to_change in self.accidentals:
-						t_accidental =self.accidental_type(self.new_scale_note,always_accidental=True)
+					if index_to_change in accidentals:
+						t_accidental =self.accidental_type(new_scale_note,always_accidental=True)
 						
-						if index in self.accidentals:
-							t_list=self.accidentals[index]
+						if index in accidentals:
+							t_list=accidentals[index]
 
 						else:
 							t_list=[]
 						t_list.append(t_accidental)
-						self.accidentals[index]=t_list
-						del self.accidentals[index_to_change]
+						accidentals[index]=t_list
+						del accidentals[index_to_change]
 
 				index_to_change=index
 				for i in ranged_list:
 					index_to_change-=7
-					if index_to_change in self.accidentals:
-						t_accidental =self.accidental_type(self.new_scale_note,always_accidental=True)
-						t_list=self.accidentals[index]
+					if index_to_change in accidentals:
+						t_accidental =self.accidental_type(new_scale_note,always_accidental=True)
+						t_list=accidentals[index]
 						t_list.append(t_accidental)
-						self.accidentals[index]=t_list
-						del self.accidentals[index_to_change]
+						accidentals[index]=t_list
+						del accidentals[index_to_change]
 
 		else:
 
@@ -1521,12 +1788,12 @@ class staff(Default_Widget):
 
 
 
-			if index in self.accidentals:
+			if index in accidentals:
 
 
-				t_list=self.accidentals[index]
+				t_list=accidentals[index]
 				t_list.append(accidental)
-				self.accidentals[index]=t_list
+				accidentals[index]=t_list
 
 			else:
 
@@ -1534,18 +1801,30 @@ class staff(Default_Widget):
 				if self.last_played_index == index:
 					#if an accidental gets added but theres a note before on the same index on same chord
 					# there must be the "always accidental" sign from the note before
-					old_note=self.midi_to_scale_note(self.pl[pl_index-2])
+					old_note=self.midi_to_scale_note(pitch_list[pl_index-2])
 					print(f"old note {old_note}")
 					
 					#this makes sure that if a note is before an accidental it also shows its sign
 					old_accidental=self.accidental_type(old_note[:-1],always_accidental=True)
-					self.accidentals[index]=[old_accidental,accidental]
+					accidentals[index]=[old_accidental,accidental]
 
 				else:
 
-					self.accidentals[index]=[accidental]
+					accidentals[index]=[accidental]
 
 
+		if accidentals_list==None:
+			self.accidentals=accidentals
+
+		else:
+			accidentals_list=accidentals
+
+
+		if default_jump == True:
+			self.jumped=jumped
+
+		if default_last_played == True:
+			self.last_played_index=last_played_index
 
 		try:
 
@@ -1564,11 +1843,35 @@ class staff(Default_Widget):
 
 		return_list.append([b_dot,w_dot])	
 		
-		return return_list
+		if accidentals_list != None:
+
+			return return_list,accidentals_list,jumped,last_played_index
+		
+		else:
+			return return_list
 
 
 
 
+
+
+	async def tick(self):
+		#print("staff tick")
+
+		if self.score_timer:
+
+
+			print(self.score_timer.remaining())
+
+			events_to_spawn = self.get_events_lookahead_and_place(
+				total_time=self.total_score_time_sec,
+				countdown_time=self.score_timer.remaining(),
+				look_ahead_sec=self.look_ahead_sec,
+
+				)
+			print(len(events_to_spawn))
+			#for i in events_to_spawn:
+			#	print(i)
 
 
 	async def resize(self):
@@ -1580,6 +1883,7 @@ class staff(Default_Widget):
 		self.top_margin=self.height*0.18
 
 		self.canvas.width=self.width
+		self.look_ahead_sec=self.compute_lookahead_seconds(self.canvas.width,self.pixels_per_second)
 		self.canvas.height=self.height+self.top_margin
 		self.line_spacing = (self.height/self.num_lines)-(self.height*0.013)
 		self.stroke_paint.stroke_width=(((self.page_size["y"]*0.01)-(self.height*0.007))*self.stroke_scale)
@@ -1623,9 +1927,6 @@ class staff(Default_Widget):
 
 
 
-
-
-
 		self.staff_lines=[]
 		l_count=0
 		for i in range(self.num_lines):
@@ -1648,6 +1949,7 @@ class staff(Default_Widget):
 
 		await self.update_func(self.pl)
 		self.Wbody.update()
+
 
 		#await trigger_event("total_update")
 
