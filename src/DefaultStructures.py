@@ -108,7 +108,7 @@ class Default_Page():
 
 	####ALLL VISUALS DONE HERE
 
-
+	#this function is basically how the inividual app executes code on note press, not a tick, only upates on press
 	async def note_update(e,self):
 
 
@@ -679,6 +679,7 @@ class visual_piano(Default_Widget):
 class staff(Default_Widget):
 
 
+
 	def compute_lookahead_seconds(
 		self,
 		screen_width_px,
@@ -857,9 +858,11 @@ class staff(Default_Widget):
 							)
 						note_shapes_list.append(note_shapes)
 				
+
+				#make_accidentals()
 				dumb_events.append({
 					"type": event_type,
-					"shapes": [note_shapes_list,accidentals_list],
+					"shapes": [note_shapes_list,self.make_accidentals(accidentals_list)],
 					"start_sec":i.get('start_sec')
 				})
 		return dumb_events
@@ -1234,8 +1237,16 @@ class staff(Default_Widget):
 				note_shapes=self.make_note(pl_count,position=None,index=index)
 
 
+				###what the fuck does this do???????? 
+				#i mean actuslly what the fuck did i do?
+				#i know like mechanically what ot does but like 
+				#i dont know why note_shapes[-1] is like that
+				#what the fuck is at the end that i dont want???
+				###wait its not even doing anythng cause its a list with one item im pretty sure, we are in the loop(:
+				## funny but im scared to touch rn im doing something else atm
 
-				for i in note_shapes[-1]:
+				# i do i[-1] because the last item is the note type, i need it for mxml parsing so i need to dodge it here
+				for i in note_shapes[-1][:-1]:
 					self.canvas.shapes.append(i)
 
 				temp_list=[]
@@ -1244,22 +1255,26 @@ class staff(Default_Widget):
 
 				self.accidental_state[str(index)]=temp_list	
 
-		#accidentals are added after because they change space retroactively on future accidentals
+		#accidentals are added after because the
+		#y change space retroactively on future accidentals
 		#the accidentals gets added in thesame order as notes get added
-		
-
-		
-
-
-	 
-		canvas_art=self.make_accidentals()
+		canvas_art=self.make_accidentals(self.accidentals)
 		print("adding_art")
-		for x in canvas_art:
-			for y in x:
-				self.canvas.shapes.append(y)
+		for i in canvas_art:
+
+			if i[-1] in {'#','b','N','##','bb'}:
+				i=i[:-1]
+			#print(f"items in canvas art/accidental list = {i}")
+			for e in i:
+				print(f'items are: {e}')
+				if type(e)== list:
+					for x in e:
+						self.canvas.shapes.append(x)
+				else:
+					self.canvas.shapes.append(e)
 		#		pass
 		
-		self.canvas.update
+		self.canvas.update()
 
 
 		pass
@@ -1425,7 +1440,7 @@ class staff(Default_Widget):
 
 		return curr_positions
 	
-	def make_accidentals(self,width=5):
+	def make_accidentals(self,accidentals_list,width=5):
 		d_height=self.d_height	
 		d_width=self.d_width
 		position=self.position
@@ -1433,9 +1448,12 @@ class staff(Default_Widget):
 		return_list	=[]
 		width = 8
 		prev_positions = None
-		for i in self.accidentals:
-			row=self.accidentals[i]
-			if (i+1 not in self.accidentals):
+		accidental_type=None
+
+			
+		for i in accidentals_list:
+			row=accidentals_list[i]
+			if (i+1 not in accidentals_list):
 				prev_positions = None
 
 
@@ -1460,6 +1478,7 @@ class staff(Default_Widget):
 
 				match x:
 					case "#":
+						accidental_type='#'
 						print("case FOUND")
 						#art for making sharps
 						
@@ -1494,9 +1513,11 @@ class staff(Default_Widget):
 
 
 
-						return_list.append([sharp_line1,sharp_line2,sharp_vert1,sharp_vert2])
+						return_list.append(([sharp_line1,sharp_line2,sharp_vert1,sharp_vert2],accidental_type))
 
 					case "b":
+						
+						accidental_type='b'
 						print("only b")
 
 						#newcolor=copy.copy(self.stroke_paint)
@@ -1525,11 +1546,12 @@ class staff(Default_Widget):
 
 
 
-						return_list.append([flat_vert1,flat_curve])
+						return_list.append(([flat_vert1,flat_curve],accidental_type))
 			
 
 					case "N":
 
+						accidental_type='N'
 						nat_vert1=cv.Line(
 							accidental_x+(d_width/5), y-(d_width-(d_width/2)),
 							accidental_x+(d_width/5), y+(d_width-(d_width/2)),
@@ -1551,11 +1573,12 @@ class staff(Default_Widget):
 
 						)
 
-						return_list.append([nat_vert1,nat_vert2,cross_line])
+						return_list.append(([nat_vert1,nat_vert2,cross_line]))
 						pass
 
 					case "##":
 
+						accidental_type='##'
 						cross_line1=cv.Line(
 							accidental_x-(d_width/5), y-(d_width-(d_width/2)),
 							accidental_x+(d_width/5), y+(d_width-(d_width/2)),
@@ -1567,11 +1590,13 @@ class staff(Default_Widget):
 							paint=self.stroke_paint,
 
 							)
-						return_list.append([cross_line1,cross_line2])
+						return_list.append(([cross_line1,cross_line2],accidental_type))
 						pass
 
 					case "bb":
 						print("bb")
+
+						accidental_type='bb'
 						flat_vert1=cv.Line(
 							accidental_x-(d_width/2.3), y-(d_width-(d_width/4)),
 							accidental_x-(d_width/2.3), y+(d_width-(d_width/1.4)),
@@ -1610,11 +1635,7 @@ class staff(Default_Widget):
 							],
 							paint=self.stroke_paint,
 							)
-						return_list.append([flat_vert1,flat_curve1,flat_vert2,flat_curve2])
-
-
-
-						pass
+						return_list.append(([flat_vert1,flat_curve1,flat_vert2,flat_curve2],accidental_type))
 
 		return return_list
 
@@ -1626,7 +1647,17 @@ class staff(Default_Widget):
 
 
 
-	def make_note(self,pl_index,position=None,index=6,accidentals_list=None,new_scale_note=None,pitch_list=None,jumped=None,last_played_index=None):
+	def make_note(
+			self,
+			pl_index,position=None,
+			index=6,
+			accidentals_list=None, #text base references to the accidentals ie ['#'#']
+			new_scale_note=None,
+			pitch_list=None,
+			jumped=None,
+			last_played_index=None,
+			duration=None
+			):
 		return_list=[]
 		
 		d_height=self.d_height	
@@ -1689,40 +1720,36 @@ class staff(Default_Widget):
 
 		x =  position
 
-		# Create the oval 
-		b_dot = cv.Oval(
-			x=x,
-			y=y- (d_height/2),
-			width=d_width,   # Width of the oval
-			height=d_height,   # Height of the oval (change for desired oval shape)
-			paint=ft.Paint(
-				color=ft.Colors.BLACK,
-				style=ft.PaintingStyle.FILL
-			)
-		)
-
-
-
-
-		# Width of the oval
-
-
-
-		w_dot = cv.Oval(
-			x=x+d_height/2.3,
-			y=y-d_width/4,
-			width=d_height/2.2,   # Width of the oval
-			height=d_width/2,   # Height of the oval (change for desired oval shape)
-			paint=ft.Paint(
-				color=ft.Colors.WHITE,
-				style=ft.PaintingStyle.FILL
-			)
-		)
-
-		d_line= cv.Line(
-			)
 		
+		if duration == None:
+			#whole note
+			note_type='whole'
+			# Create the oval 
+			b_dot = cv.Oval(
+				x=x,
+				y=y- (d_height/2),
+				width=d_width,   # Width of the oval
+				height=d_height,   # Height of the oval (change for desired oval shape)
+				paint=ft.Paint(
+					color=ft.Colors.BLACK,
+					style=ft.PaintingStyle.FILL
+				)
+			)
+			# Width of the oval
+			w_dot = cv.Oval(
+				x=x+d_height/2.3,
+				y=y-d_width/4,
+				width=d_height/2.2,   # Width of the oval
+				height=d_width/2,   # Height of the oval (change for desired oval shape)
+				paint=ft.Paint(
+					color=ft.Colors.WHITE,
+					style=ft.PaintingStyle.FILL
+				)
+			)
 
+			d_line= cv.Line(
+				)
+			
 		##basically managing all the accidentals 
 
 		accidental=self.accidental_type(new_scale_note,always_accidental=False)
@@ -1841,10 +1868,11 @@ class staff(Default_Widget):
 
 
 
-		return_list.append([b_dot,w_dot])	
+		return_list.append([b_dot,w_dot,note_type])	
 		
 		if accidentals_list != None:
-
+			####yoo this shit is like looking at a room in a submarine 
+			####and realizing and there is a hole held by duct-tape and its about to burst
 			return return_list,accidentals_list,jumped,last_played_index
 		
 		else:
