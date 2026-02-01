@@ -685,24 +685,27 @@ class staff(Default_Widget):
 
 
 	def _shift_drawable_x(self, shape, dx):
-		print(f"  _shift_drawable_x called: shape={type(shape).__name__}, dx={dx}")
-		
 		# Most shapes (Oval, Path, Rect, Text, etc.)
 		if hasattr(shape, "x"):
-			old_x = shape.x
 			shape.x += dx
-			print(f"    Shape with x: {old_x} -> {shape.x}")
 			return
 
 		# Line is special
 		if hasattr(shape, "x1") and hasattr(shape, "x2"):
-			old_x1, old_x2 = shape.x1, shape.x2
 			shape.x1 += dx
 			shape.x2 += dx
-			print(f"    Line: x1 {old_x1} -> {shape.x1}, x2 {old_x2} -> {shape.x2}")
 			return
-    
-		print(f"    WARNING: Shape has no x attribute!")
+		
+		# Path is special - need to shift all points
+		if isinstance(shape, cv.Path) and hasattr(shape, 'elements'):
+			for element in shape.elements:
+				if hasattr(element, 'x'):
+					element.x += dx
+				if hasattr(element, 'x1'):
+					element.x1 += dx
+				if hasattr(element, 'x2'):
+					element.x2 += dx
+			return
 
 
 	def resize_shape(self, shape_to_resize):
