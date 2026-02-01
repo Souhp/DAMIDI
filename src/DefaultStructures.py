@@ -16,33 +16,8 @@ from mxmlParser import parse_musicxml_chords
 import time
 
 
-class Timer:
-    def __init__(self, duration_seconds):
-        self.duration = duration_seconds
-        self.start_time = None
-        self.finished = False
 
-    def start(self):
-        self.start_time = time.monotonic()
-        self.finished = False
 
-    def tick(self):
-        if self.start_time is None or self.finished:
-            return
-
-        elapsed = time.monotonic() - self.start_time
-
-        if elapsed >= self.duration:
-            self.finished = True
-            self.on_finish()
-
-    def remaining(self):
-        if self.start_time is None:
-            return self.duration
-        return max(0, self.duration - (time.monotonic() - self.start_time))
-
-    def on_finish(self):
-        print("Timer finished")
 
 class SizeAwareControl(cv.Canvas):
 	def __init__(self, content=None, resize_interval=100, on_resize=None, **kwargs):
@@ -679,6 +654,91 @@ class visual_piano(Default_Widget):
 class staff(Default_Widget):
 
 
+	class Timer:
+		__slots__ = ("duration", "end_time")
+
+		def __init__(self, duration_seconds):
+			self.duration = duration_seconds
+			self.end_time = None
+
+		def start(self):
+			self.end_time = time.monotonic() + self.duration
+
+		def stop(self):
+			self.end_time = None
+
+		def tick(self):
+			if self.end_time is not None and time.monotonic() >= self.end_time:
+				self.end_time = None
+				self.on_finish()
+
+		def remaining(self):
+			if self.end_time is None:
+				return self.duration
+			return max(0.0, self.end_time - time.monotonic())
+
+		def running(self):
+			return self.end_time is not None
+
+		def on_finish(self):
+			print("Timer finished")
+
+
+	def _shift_drawable_x(self, shape, dx):
+		print(f"  _shift_drawable_x called: shape={type(shape).__name__}, dx={dx}")
+		
+		# Most shapes (Oval, Path, Rect, Text, etc.)
+		if hasattr(shape, "x"):
+			old_x = shape.x
+			shape.x += dx
+			print(f"    Shape with x: {old_x} -> {shape.x}")
+			return
+
+		# Line is special
+		if hasattr(shape, "x1") and hasattr(shape, "x2"):
+			old_x1, old_x2 = shape.x1, shape.x2
+			shape.x1 += dx
+			shape.x2 += dx
+			print(f"    Line: x1 {old_x1} -> {shape.x1}, x2 {old_x2} -> {shape.x2}")
+			return
+    
+		print(f"    WARNING: Shape has no x attribute!")
+
+
+	def resize_shape(self, shape_to_resize):
+		if shape_to_resize.get("type") != "chord":
+			return
+
+		x_target = shape_to_resize.get("x_position")
+		if x_target is None:
+			return
+
+		previous_x = shape_to_resize.get("current_x", self.position)
+		dx = x_target - previous_x
+		
+		# NEGATE dx to reverse direction
+		dx = -dx  # ← ADD THIS LINE
+		
+		shape_to_resize["current_x"] = x_target
+
+		note_shapes, accidental_shapes = shape_to_resize["shapes"]
+    
+    # ... rest of your code
+
+		# Move NOTES - handle the extra nesting!
+		for note_group in note_shapes:  # This is [[Oval, Oval, 'whole']]
+			for note_block in note_group:  # Now this is [Oval, Oval, 'whole']
+				if isinstance(note_block, list):
+					note_type = note_block[-1]
+					drawable_shapes = note_block[:-1]
+					for shape in drawable_shapes:
+						self._shift_drawable_x(shape, dx)
+
+		# Move ACCIDENTALS
+		for acc_block in accidental_shapes:
+			shapes, acc_type = acc_block
+			for shape in shapes:
+				self._shift_drawable_x(shape, dx)
 
 	def compute_lookahead_seconds(
 		self,
@@ -751,9 +811,9 @@ class staff(Default_Widget):
 			# inside lookahead window
 			elif start < window_end:
 
-				#append x position	
-				event['x_position']=screen_width - ((start- countdown_time)*self.pixels_per_second)
-
+				#append x position
+				event['x_position']=screen_width - ((start- current_time)*self.pixels_per_second)
+				self.resize_shape(event)
 
 				result.append(event)
 
@@ -770,7 +830,7 @@ class staff(Default_Widget):
 
 	def create_dumb_events(self,events):
 
-
+		tempo_scale=5
 		dumb_events=[]
 
 		for i in events:
@@ -863,7 +923,7 @@ class staff(Default_Widget):
 				dumb_events.append({
 					"type": event_type,
 					"shapes": [note_shapes_list,self.make_accidentals(accidentals_list)],
-					"start_sec":i.get('start_sec')
+					"start_sec": i.get('start_sec')*tempo_scale
 				})
 		return dumb_events
 
@@ -903,6 +963,8 @@ class staff(Default_Widget):
 		self.total_score_time_sec=0
 		self.pixels_per_second=240
 
+
+		self.user_note_shapes=[]
 
 
 
@@ -1127,7 +1189,7 @@ class staff(Default_Widget):
 
 
 
-				self.score_timer= Timer(self.total_score_time_sec)
+				self.score_timer= self.Timer(self.total_score_time_sec)
 
 				self.score_timer.start()
 				
@@ -1170,6 +1232,9 @@ class staff(Default_Widget):
 	async def update_func(self,pl):
 
 
+	
+		self.user_note_shapes=[]
+
 		#print(f"pitches list: {pl}")
 
 		#used in make note for staff notation
@@ -1187,9 +1252,6 @@ class staff(Default_Widget):
 
 		#print(f"list of shapes:  {self.canvas.shapes}")
 		
-		self.canvas.shapes=self.canvas.shapes[:(self.num_lines)]
-		print("updateing")
-
 
 
 		pl_count=0
@@ -1247,7 +1309,8 @@ class staff(Default_Widget):
 
 				# i do i[-1] because the last item is the note type, i need it for mxml parsing so i need to dodge it here
 				for i in note_shapes[-1][:-1]:
-					self.canvas.shapes.append(i)
+
+					self.user_note_shapes.append(i)
 
 				temp_list=[]
 				for i in note_shapes[:-1]:
@@ -1269,16 +1332,9 @@ class staff(Default_Widget):
 				print(f'items are: {e}')
 				if type(e)== list:
 					for x in e:
-						self.canvas.shapes.append(x)
+						self.user_note_shapes.append(x)
 				else:
-					self.canvas.shapes.append(e)
-		#		pass
-		
-		self.canvas.update()
-
-
-		pass
-
+					self.user_note_shapes.append(e)
 	
 
 	def accidental_type(self,note,always_accidental=False):
@@ -1649,7 +1705,8 @@ class staff(Default_Widget):
 
 	def make_note(
 			self,
-			pl_index,position=None,
+			pl_index,
+			position=None,
 			index=6,
 			accidentals_list=None, #text base references to the accidentals ie ['#'#']
 			new_scale_note=None,
@@ -1883,12 +1940,15 @@ class staff(Default_Widget):
 
 
 
-	async def tick(self):
-		#print("staff tick")
+	async def tick(self,updated=False):
+		#print("staff ick")
+		canvas_update=False
+		t_update=False
+		events_to_spawn=[]
 
-		if self.score_timer:
+		if self.score_timer and self.score_timer.running():
 
-
+			self.score_timer.tick()
 			print(self.score_timer.remaining())
 
 			events_to_spawn = self.get_events_lookahead_and_place(
@@ -1898,9 +1958,40 @@ class staff(Default_Widget):
 
 				)
 			print(len(events_to_spawn))
-			#for i in events_to_spawn:
-			#	print(i)
 
+			t_update=True
+			canvas_update=True
+
+
+		if updated:
+			t_update=True
+
+
+		if t_update:
+			print(f"the numver of items in user shapes is{len(self.user_note_shapes)}")
+			
+			
+			self.canvas.shapes=self.canvas.shapes[:(self.num_lines)]
+			
+			
+			for i in self.user_note_shapes:
+				self.canvas.shapes.append(i)
+			
+			
+			####xml notes 
+			for event in events_to_spawn:
+
+				#print(event)
+				for note_group in event['shapes'][0]:
+					for note in note_group:          # unwrap the extra list
+						for shape in note[:-1]:      # drop 'whole'
+							self.canvas.shapes.append(shape)
+				for accidental_shapes, accidental_sign in event['shapes'][1]:
+					for shape in accidental_shapes:
+						self.canvas.shapes.append(shape)
+
+		if canvas_update:
+			self.canvas.update()
 
 	async def resize(self):
 		print("timetoresizestaff")
@@ -1976,6 +2067,7 @@ class staff(Default_Widget):
 		self.canvas.shapes.append(self.noteline)
 
 		await self.update_func(self.pl)
+		await self.tick(updated=True)
 		self.Wbody.update()
 
 

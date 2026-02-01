@@ -43,8 +43,8 @@ class App_Inst(Default_Page):
 			print(f"pitch: {pitch}")
 			pl.append(pitch)
 
-
 		await self.staff.update_func(pl)
+		await self.staff.tick(updated=True)
 		self.staff.Wbody.update()
 
 
