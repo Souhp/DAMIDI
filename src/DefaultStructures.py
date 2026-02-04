@@ -333,7 +333,7 @@ class chord_display(Default_Widget):
 				alignment=ft.MainAxisAlignment.CENTER,
 				controls=[self.Chord_Body],
 			),
-			bgcolor=ft.Colors.AMBER_500,
+			bgcolor=ft.Colors.BLACK,
 			alignment=ft.alignment.center,
 			expand=True,
 		)
@@ -682,31 +682,54 @@ class staff(Default_Widget):
 
 		def on_finish(self):
 			print("Timer finished")
-
+	def toggle_playback(self, button):
+		"""Toggle between play and pause"""
+		if not self.score_timer:
+			return
+		
+		if button.data["playing"]:
+			# Currently playing → pause
+			self.paused_time_remaining = self.score_timer.remaining()  # ← ADD THIS
+			self.score_timer.stop()
+			button.icon = ft.Icons.PLAY_ARROW
+			button.tooltip = "Play"
+			button.data["playing"] = False
+		else:
+			# Currently paused → play
+			# ← ADD THESE 2 LINES:
+			if hasattr(self, 'paused_time_remaining') and self.paused_time_remaining is not None:
+				self.score_timer.duration = self.paused_time_remaining
+			self.score_timer.start()
+			button.icon = ft.Icons.PAUSE
+			button.tooltip = "Pause"
+			button.data["playing"] = True
+		
+		button.update()
 
 	def _shift_drawable_x(self, shape, dx):
-		# Most shapes (Oval, Path, Rect, Text, etc.)
-		if hasattr(shape, "x"):
-			shape.x += dx
-			return
-
-		# Line is special
+		# Line
 		if hasattr(shape, "x1") and hasattr(shape, "x2"):
 			shape.x1 += dx
 			shape.x2 += dx
 			return
-		
-		# Path is special - need to shift all points
+
+		# Path — shift all elements explicitly by type
 		if isinstance(shape, cv.Path) and hasattr(shape, 'elements'):
 			for element in shape.elements:
-				if hasattr(element, 'x'):
+				if isinstance(element, cv.Path.MoveTo):
 					element.x += dx
-				if hasattr(element, 'x1'):
-					element.x1 += dx
-				if hasattr(element, 'x2'):
-					element.x2 += dx
+				elif isinstance(element, cv.Path.QuadraticTo):
+					element.cp1x += dx  # control point
+					element.x += dx     # end point
+				elif isinstance(element, cv.Path.LineTo):
+					element.x += dx
+				# Close has no coordinates, skip it
 			return
 
+		# Oval, Rect, Text, etc.
+		if hasattr(shape, "x"):
+			shape.x += dx
+			return
 
 	def resize_shape(self, shape_to_resize):
 		if shape_to_resize.get("type") != "chord":
@@ -716,7 +739,7 @@ class staff(Default_Widget):
 		if x_target is None:
 			return
 
-		previous_x = shape_to_resize.get("current_x", self.position)
+		previous_x = shape_to_resize.get("current_x", self.canvas.width)
 		dx = x_target - previous_x
 		
 		# NEGATE dx to reverse direction
@@ -745,7 +768,7 @@ class staff(Default_Widget):
 
 	def compute_lookahead_seconds(
 		self,
-		screen_width_px,
+		screen_length_px,
 		pixels_per_second,
 		buffer_seconds=0.1
 	):
@@ -753,7 +776,7 @@ class staff(Default_Widget):
 		Returns how many seconds ahead we should look.
 		"""
 
-		visible_seconds = screen_width_px / pixels_per_second
+		visible_seconds = screen_length_px / pixels_per_second
 		return visible_seconds + buffer_seconds
 
 	def get_events_lookahead_and_place(
@@ -831,86 +854,71 @@ class staff(Default_Widget):
 
 		return result
 
-	def create_dumb_events(self,events):
-
-		tempo_scale=5
-		dumb_events=[]
-
+	
+	def create_dumb_events(self, events):
+		tempo_scale = 5
+		dumb_events = []
+		global_note_counter = 0  # ← Tracks position across entire piece
+		
 		for i in events:
 			event_type = i.get("type")
 			
-
-
 			if event_type == "bar":
-				
 				dumb_events.append({
 					"type": event_type,
-					})
-
-
+				})
+			
 			elif event_type == "chord":
-				
-
-				pl=[]
-				pl_count=0
+				pl = []
 				notes = i.get("notes", [])
-				accidentals_list={}
-				jumped=False
-				last_played_index=float('inf')
-				note_shapes_list=[]
+				accidentals_list = {}
+				jumped = False
+				last_played_index = float('inf')
+				note_shapes_list = []
 				
+				# First, build the pitch list
 				for note in notes:
-					## can use note.get('duration_div') to know the type of note ie: whole, half, ect...
-						
 					pitch = note.get('pitch')
 					pl.append(pitch)
-					
-
-				for pitch in pl:
-					pl_count+=1
-
-
-
-				#	takes pitch get scale note 
-					tscale_note=str(self.midi_to_scale_note(pitch))
 				
+				# NOW iterate with BOTH counters
+				for pl_index, pitch in enumerate(pl, start=1):  # ← KEEP enumerate for chord-local index
+					global_note_counter += 1  # ← Also increment global counter
+					
+					print(f"\n=== Processing pitch {pitch} (note #{global_note_counter}, chord position #{pl_index}) ===")
+					
+					tscale_note = str(self.midi_to_scale_note(pitch))
+					print(f"tscale_note: {tscale_note}")
+					
 					note_name = tscale_note[0]
 					note_octave = tscale_note[-1]
-					print(f"t scale note: {(note_name+note_octave)}")
-
-					new_scale_note=tscale_note[0]
-					tlen=len(tscale_note)
 					
-
-
-					#adds the note and remove the octave at the end
-					if tlen>3:
-						new_scale_note=new_scale_note+tscale_note[1]+tscale_note[2]
-
-					elif tlen>2:
-						new_scale_note=new_scale_note+tscale_note[1]
-
-
-
-
-
-
-					print(f"pitchaaa: {pitch}")
-				#	#self.not_dic has all the keys in the specified range and their position in the canvas
-				#	##if not in range it will not appear in the staff bc i dont have space it would look crazy
-					if str(note_name+note_octave) in self.note_dic:
+					# Extract accidental
+					new_scale_note = tscale_note[0]
+					tlen = len(tscale_note)
+					
+					if tlen > 3:
+						new_scale_note = new_scale_note + tscale_note[1] + tscale_note[2]
+					elif tlen > 2:
+						new_scale_note = new_scale_note + tscale_note[1]
+					
+					print(f"note_name: {note_name}")
+					print(f"note_octave: {note_octave}")
+					print(f"new_scale_note: {new_scale_note}")
+					print(f"accidentals_list BEFORE: {accidentals_list}")
+					
+					# Handle B# edge case
+					if new_scale_note == "B#":
+						lookup_key = str(note_name + str(int(note_octave) - 1))
+					else:
+						lookup_key = str(note_name + note_octave)
+					
+					if lookup_key in self.note_dic:
+						index = self.note_dic[lookup_key]
+						print(f"index for {lookup_key}: {index}")
 						
-
-						#scales like F# will have C## so to not have c,c#,c## we make c to b#.
-						#but my systems is crude and does not work like that. it just takes in an index and note
-						#so I have to switch it back for this function to let the staff know that this is the first appeance of B and not the last B in the scale
-						if new_scale_note=="B#":
-							index =self.note_dic[str(note_name+str(int(note_octave)-1))]	
-						else:
-							index =self.note_dic[str(note_name+note_octave)]
-
-						note_shapes,accidentals_list,jumped,last_played_index=self.make_note(
-							pl_count,
+						note_shapes, accidentals_list, jumped, last_played_index = self.make_note(
+							pl_index,  # ← Use chord-local index for pitch_list access
 							position=None,
 							index=index,
 							accidentals_list=accidentals_list,
@@ -918,17 +926,22 @@ class staff(Default_Widget):
 							pitch_list=pl,
 							jumped=jumped,
 							last_played_index=last_played_index
-							)
+						)
+						
+						print(f"accidentals_list AFTER: {accidentals_list}")
 						note_shapes_list.append(note_shapes)
+					else:
+						print(f"SKIPPED: {lookup_key} not in note_dic")
 				
-
-				#make_accidentals()
+				# make_accidentals()
 				dumb_events.append({
 					"type": event_type,
-					"shapes": [note_shapes_list,self.make_accidentals(accidentals_list)],
-					"start_sec": i.get('start_sec')*tempo_scale
+					"shapes": [note_shapes_list, self.make_accidentals(accidentals_list)],
+					"start_sec": i.get('start_sec') * tempo_scale,
 				})
+		
 		return dumb_events
+
 
 	def change_octave_field(self,x,y,z,param):
 		print("ss")
@@ -948,6 +961,56 @@ class staff(Default_Widget):
 		##this is how everything is mapped##
 		self.set_note_dic()
 
+	def handle_file_result(self, e: ft.FilePickerResultEvent, filesButton):
+		if e.files:
+
+			self.currentFile = e.files[0].path
+			print(self.currentFile)
+			textforbutton = self.currentFile if len(self.currentFile) < 15 else self.currentFile[:15]+"..."
+			if filesButton:
+				filesButton.content.controls[0].controls[0].value = textforbutton
+				filesButton.update()
+			
+			##parse music xml
+			events,self.total_score_time_sec = parse_musicxml_chords("/home/soup/Downloads/Fur_Elise/score.xml")
+			self.total_score_time_sec=self.total_score_time_sec*5
+			self.current_event=self.create_dumb_events(events)
+			
+			print(f"{len(self.current_event)} is dumb vs {len(events)} ")
+
+
+
+			self.score_timer= self.Timer(self.total_score_time_sec)
+			self.total_score_time_sec=self.total_score_time_sec
+
+			play_pause_button = ft.IconButton(
+				icon=ft.Icons.PLAY_ARROW,
+				tooltip="Play",
+				data={"playing": False},  # track state
+				on_click=lambda e: self.toggle_playback(e.control)
+			)
+
+			restart_button = ft.IconButton(
+				icon=ft.Icons.RESTART_ALT,
+				tooltip="Restart",
+				on_click=lambda _: self.restart_score()
+			)
+
+			# Add them to the layout
+			controls_row = ft.Row(
+				controls=[play_pause_button, restart_button],
+				spacing=5
+			)
+
+			self.Wbody.content.controls[0].controls.append(controls_row)
+			self.Wbody.content.controls[0].update()
+		else:
+			if filesButton:
+
+				filesButton.content.controls[0].controls[0].value = "NONE"
+				filesButton.update()
+			self.currentFile= None
+
 
 
 
@@ -964,9 +1027,11 @@ class staff(Default_Widget):
 		self.event_index=0
 		self.current_event=None
 		self.total_score_time_sec=0
-		self.pixels_per_second=240
+		self.pixels_per_second=70
 
 
+
+		self.paused_time_remaining = None
 		self.user_note_shapes=[]
 
 
@@ -1001,7 +1066,7 @@ class staff(Default_Widget):
 
 
 		self.Wbody = ft.Container(
-			bgcolor=ft.Colors.AMBER_500,
+			bgcolor=ft.Colors.BLACK,
 			alignment=ft.alignment.center,
 			#on_resized=lambda: print("resized"),
 			#expand=True,
@@ -1174,48 +1239,16 @@ class staff(Default_Widget):
 
 		)
 
-		def handle_file_result(e):
-			if e.files:
 
-				self.currentFile = e.files[0].path
-				print(self.currentFile)
-				textforbutton = self.currentFile if len(self.currentFile) < 15 else self.currentFile[:15]+"..."
-				filesButton.content.controls[0].controls[0].value = textforbutton
-				filesButton.update()
-
-				
-				##parse music xml
-				events,self.total_score_time_sec = parse_musicxml_chords("/home/soup/Downloads/Fur_Elise/score.xml")
-				self.current_event=self.create_dumb_events(events)
-				
-				print(f"{len(self.current_event)} is dumb vs {len(events)} ")
-
-
-
-				self.score_timer= self.Timer(self.total_score_time_sec)
-
-				self.score_timer.start()
-				
-
-
-
-				###time to add the buttons on the top###
-
-				globHeader.content.controls.insert(1,ft.ElevatedButton(content=ft.Text("PENIS")))
-				globHeader.update()
-			else:
-				filesButton.content.controls[0].controls[0].value = "NONE"
-				self.currentFile= None
-				filesButton.update()
-
-
-
-		pick_files_dialog = ft.FilePicker(on_result=handle_file_result)
-		#trigger_event("addToOverlay",pick_files_dialog)
 		filesButton=ft.ElevatedButton(
 			content=ft.Column(controls=[ft.Row(controls=[ft.Text(self.currentFile or "NONE",overflow=ft.TextOverflow.ELLIPSIS,expand_loose=True)],wrap=True)],wrap=True),
 			on_click=lambda _: pick_files_dialog.pick_files(allow_multiple=False, allowed_extensions=["mxl","xml"]),
 		)
+
+		pick_files_dialog = ft.FilePicker(
+			on_result=lambda e: self.handle_file_result(e, filesButton)
+		)
+
 		fileSelectRow=ft.Row(
 			alignment=ft.MainAxisAlignment.CENTER,
 
@@ -1512,11 +1545,13 @@ class staff(Default_Widget):
 			
 		for i in accidentals_list:
 			row=accidentals_list[i]
+			print(f"DEBUG: Processing index {i}, row: {row}")
 			if (i+1 not in accidentals_list):
 				prev_positions = None
 
 
 			curr = self.assign_positions(row, i,prev_positions, width)
+			print(f"DEBUG: Positions assigned: {curr}")
 			prev_positions = set(curr)
 
 			count=0
@@ -1528,7 +1563,7 @@ class staff(Default_Widget):
 				print(f"positionmult: {position_mult}")
 				space_between=d_width/2
 				accidental_x=(og_position+d_width/2)-((d_width*0.9)*int(position_mult))
-				
+				print(f"DEBUG: accidental_x for {x} = {accidental_x}, og_position={og_position}, d_width={d_width}")  # ← ADD THIS
 
 				#---------------------------------------#
 				#---------------------------------------#
@@ -1632,7 +1667,9 @@ class staff(Default_Widget):
 
 						)
 
-						return_list.append(([nat_vert1,nat_vert2,cross_line]))
+	
+						return_list.append(([nat_vert1,nat_vert2,cross_line], accidental_type))  # <-- Add tuple
+
 						pass
 
 					case "##":
@@ -1729,7 +1766,7 @@ class staff(Default_Widget):
 			accidentals=self.accidentals
 		else:
 			
-			accidentals= accidentals_list.copy()
+			accidentals= accidentals_list
 		
 
 		if new_scale_note==None:
@@ -1779,7 +1816,7 @@ class staff(Default_Widget):
 
 
 		x =  position
-
+		print(f"DEBUG make_note: position={position}, self.position={self.position}, self.og_position={self.og_position}")
 		
 		if duration == None:
 			#whole note
@@ -1876,29 +1913,29 @@ class staff(Default_Widget):
 
 
 			if index in accidentals:
-
-
 				t_list=accidentals[index]
 				t_list.append(accidental)
 				accidentals[index]=t_list
 
 			else:
-
-
 				if self.last_played_index == index:
 					#if an accidental gets added but theres a note before on the same index on same chord
 					# there must be the "always accidental" sign from the note before
-					old_note=self.midi_to_scale_note(pitch_list[pl_index-2])
-					print(f"old note {old_note}")
 					
-					#this makes sure that if a note is before an accidental it also shows its sign
-					old_accidental=self.accidental_type(old_note[:-1],always_accidental=True)
-					accidentals[index]=[old_accidental,accidental]
+					# ADD THIS CHECK:
+					if pl_index >= 2:  # Make sure there's actually a previous note in THIS chord
+						old_note=self.midi_to_scale_note(pitch_list[pl_index-2])
+						print(f"old note {old_note}")
+						
+						#this makes sure that if a note is before an accidental it also shows its sign
+						old_accidental=self.accidental_type(old_note[:-1],always_accidental=True)
+						accidentals[index]=[old_accidental,accidental]
+					else:
+						# First note in chord - no previous note to reference
+						accidentals[index]=[accidental]
 
 				else:
-
 					accidentals[index]=[accidental]
-
 
 		if accidentals_list==None:
 			self.accidentals=accidentals
