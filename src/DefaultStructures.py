@@ -1558,19 +1558,25 @@ class staff(Default_Widget):
 			y = self.top_margin + i/2 * self.line_spacing
 			
 			for x in row:
+				# ← ADD THIS UNPACKING BEFORE THE MATCH:
+				if isinstance(x, tuple):  # XML mode - tuple of (accidental, position)
+					accidental_char, note_x = x
+				else:  # User notes mode - just the accidental character
+					accidental_char = x
+					note_x = og_position
+				
 				position_mult=curr[count]+1
 				count+=1
 				print(f"positionmult: {position_mult}")
 				space_between=d_width/2
-				accidental_x=(og_position+d_width/2)-((d_width*0.9)*int(position_mult))
-				print(f"DEBUG: accidental_x for {x} = {accidental_x}, og_position={og_position}, d_width={d_width}")  # ← ADD THIS
+				accidental_x=(note_x+d_width/2)-((d_width*0.9)*int(position_mult))  # ← Use note_x instead of og_position
+				print(f"DEBUG: accidental_x for {accidental_char} = {accidental_x}, note_x={note_x}, og_position={og_position}, d_width={d_width}")
 
 				#---------------------------------------#
 				#---------------------------------------#
 
-
-
-				match x:
+				# ← NOW USE accidental_char IN THE MATCH:
+				match accidental_char:  # ← Changed from 'x' to 'accidental_char'
 					case "#":
 						accidental_type='#'
 						print("case FOUND")
@@ -1667,8 +1673,8 @@ class staff(Default_Widget):
 
 						)
 
-	
-						return_list.append(([nat_vert1,nat_vert2,cross_line], accidental_type))  # <-- Add tuple
+
+						return_list.append(([nat_vert1,nat_vert2,cross_line], accidental_type))
 
 						pass
 
@@ -1741,20 +1747,18 @@ class staff(Default_Widget):
 
 
 
-
-
 	def make_note(
-			self,
-			pl_index,
-			position=None,
-			index=6,
-			accidentals_list=None, #text base references to the accidentals ie ['#'#']
-			new_scale_note=None,
-			pitch_list=None,
-			jumped=None,
-			last_played_index=None,
-			duration=None
-			):
+		self,
+		pl_index,
+		position=None,
+		index=6,
+		accidentals_list=None, #text base references to the accidentals ie ['#'#']
+		new_scale_note=None,
+		pitch_list=None,
+		jumped=None,
+		last_played_index=None,
+		duration=None
+		):
 		return_list=[]
 		
 		d_height=self.d_height	
@@ -1764,14 +1768,15 @@ class staff(Default_Widget):
 
 		if accidentals_list==None:
 			accidentals=self.accidentals
+			is_xml_mode=False
 		else:
-			
+			is_xml_mode=True
 			accidentals= accidentals_list
 		
 
 		if new_scale_note==None:
 			new_scale_note=self.new_scale_note
-	
+
 		if pitch_list==None:
 			pitch_list=self.pl
 		
@@ -1816,6 +1821,7 @@ class staff(Default_Widget):
 
 
 		x =  position
+		
 		print(f"DEBUG make_note: position={position}, self.position={self.position}, self.og_position={self.og_position}")
 		
 		if duration == None:
@@ -1850,51 +1856,75 @@ class staff(Default_Widget):
 		##basically managing all the accidentals 
 
 		accidental=self.accidental_type(new_scale_note,always_accidental=False)
+		
+		print(f"DEBUG: accidental={accidental}, new_scale_note={new_scale_note}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
 
 		if accidental==None:
 
-
-
-
-
 			#case: when   #@[@]<-new note
 			if index in accidentals:
-				t_accidental =self.accidental_type(new_scale_note,always_accidental=True)
-				t_list=accidentals[index]
-				t_list.append(t_accidental)
-				accidentals[index]=t_list
+				t_accidental = self.accidental_type(new_scale_note, always_accidental=True)
+				t_list = accidentals[index]
+				
+				print(f"DEBUG: Adding natural accidental {t_accidental} at index {index}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
+				
+				# Add tuple for XML mode, string for user notes
+				if is_xml_mode:
+					t_list.append((t_accidental, position))
+				else:
+					t_list.append(t_accidental)
+				
+				accidentals[index] = t_list
+				print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
 
 			else:
 
-				ranged_list =range(3)
+				ranged_list = range(3)
 
 
 				#case: when #@ <-old note C#2
 				#			 -
 				#			[@]<-new note C#3
-				index_to_change=index
+				index_to_change = index
 				for i in ranged_list:
-					index_to_change+=7
+					index_to_change += 7
 					if index_to_change in accidentals:
-						t_accidental =self.accidental_type(new_scale_note,always_accidental=True)
+						t_accidental = self.accidental_type(new_scale_note, always_accidental=True)
 						
 						if index in accidentals:
-							t_list=accidentals[index]
-
+							t_list = accidentals[index]
 						else:
-							t_list=[]
-						t_list.append(t_accidental)
-						accidentals[index]=t_list
+							t_list = []
+						
+						print(f"DEBUG: Propagating accidental {t_accidental} from {index_to_change} to {index}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
+						
+						# Add tuple for XML mode, string for user notes
+						if is_xml_mode:
+							t_list.append((t_accidental, position))
+						else:
+							t_list.append(t_accidental)
+						
+						accidentals[index] = t_list
+						print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
 						del accidentals[index_to_change]
 
-				index_to_change=index
+				index_to_change = index
 				for i in ranged_list:
-					index_to_change-=7
+					index_to_change -= 7
 					if index_to_change in accidentals:
-						t_accidental =self.accidental_type(new_scale_note,always_accidental=True)
-						t_list=accidentals[index]
-						t_list.append(t_accidental)
-						accidentals[index]=t_list
+						t_accidental = self.accidental_type(new_scale_note, always_accidental=True)
+						t_list = accidentals[index]
+						
+						print(f"DEBUG: Propagating accidental {t_accidental} from {index_to_change} to {index}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
+						
+						# Add tuple for XML mode, string for user notes
+						if is_xml_mode:
+							t_list.append((t_accidental, position))
+						else:
+							t_list.append(t_accidental)
+						
+						accidentals[index] = t_list
+						print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
 						del accidentals[index_to_change]
 
 		else:
@@ -1904,38 +1934,50 @@ class staff(Default_Widget):
 				print("found accidental sharp")
 			elif accidental == "b":
 				print("found accidental flat")
-
 			elif accidental == "N":
 				print("found accidental Natural")
 
-
-
-
-
 			if index in accidentals:
-				t_list=accidentals[index]
-				t_list.append(accidental)
-				accidentals[index]=t_list
-
+				t_list = accidentals[index]
+				
+				print(f"DEBUG: Adding accidental {accidental} to existing list at index {index}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
+				
+				# Store as tuple for XML, string for user notes
+				if is_xml_mode:
+					t_list.append((accidental, position))  # ← Store position for XML
+				else:
+					t_list.append(accidental)  # ← Just string for user notes
+				accidentals[index] = t_list
+				print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
 			else:
 				if self.last_played_index == index:
-					#if an accidental gets added but theres a note before on the same index on same chord
-					# there must be the "always accidental" sign from the note before
-					
-					# ADD THIS CHECK:
-					if pl_index >= 2:  # Make sure there's actually a previous note in THIS chord
-						old_note=self.midi_to_scale_note(pitch_list[pl_index-2])
-						print(f"old note {old_note}")
+					if pl_index >= 2:
+						old_note = self.midi_to_scale_note(pitch_list[pl_index-2])
+						old_accidental = self.accidental_type(old_note[:-1], always_accidental=True)
 						
-						#this makes sure that if a note is before an accidental it also shows its sign
-						old_accidental=self.accidental_type(old_note[:-1],always_accidental=True)
-						accidentals[index]=[old_accidental,accidental]
+						print(f"DEBUG: Creating new list with old_accidental={old_accidental} and accidental={accidental}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
+						
+						if is_xml_mode:
+							accidentals[index] = [(old_accidental, position), (accidental, position)]
+						else:
+							accidentals[index] = [old_accidental, accidental]
+						print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
 					else:
-						# First note in chord - no previous note to reference
-						accidentals[index]=[accidental]
-
+						print(f"DEBUG: Creating new list with just accidental={accidental}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
+						
+						if is_xml_mode:
+							accidentals[index] = [(accidental, position)]
+						else:
+							accidentals[index] = [accidental]
+						print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
 				else:
-					accidentals[index]=[accidental]
+					print(f"DEBUG: Creating new list with accidental={accidental}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
+					
+					if is_xml_mode:
+						accidentals[index] = [(accidental, position)]
+					else:
+						accidentals[index] = [accidental]
+					print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
 
 		if accidentals_list==None:
 			self.accidentals=accidentals
@@ -1974,8 +2016,6 @@ class staff(Default_Widget):
 		
 		else:
 			return return_list
-
-
 
 
 
