@@ -14,6 +14,7 @@ import math
 import copy
 from mxmlParser import parse_musicxml_chords
 import time
+from staff_shapes import shape_constructor
 
 
 
@@ -732,25 +733,36 @@ class staff(Default_Widget):
 			return
 
 	def resize_shape(self, shape_to_resize):
-		if shape_to_resize.get("type") != "chord":
-			return
-
+		event_type = shape_to_resize.get("type")
 		x_target = shape_to_resize.get("x_position")
+		
 		if x_target is None:
 			return
-
+		
 		previous_x = shape_to_resize.get("current_x", self.canvas.width)
 		dx = x_target - previous_x
 		
 		# NEGATE dx to reverse direction
-		dx = -dx  # ← ADD THIS LINE
+		dx = -dx
 		
 		shape_to_resize["current_x"] = x_target
-
+		
+		# ---------- HANDLE BARS ----------
+		if event_type == "bar":
+			shapes = shape_to_resize.get("shapes", [])
+			for shape_group in shapes:
+				if isinstance(shape_group, tuple):
+					shape_list, shape_type = shape_group
+					for shape in shape_list:
+						self._shift_drawable_x(shape, dx)
+			return
+		
+		# ---------- HANDLE CHORDS ----------
+		if event_type != "chord":
+			return
+		
 		note_shapes, accidental_shapes = shape_to_resize["shapes"]
-    
-    # ... rest of your code
-
+		
 		# Move NOTES - handle the extra nesting!
 		for note_group in note_shapes:  # This is [[Oval, Oval, 'whole']]
 			for note_block in note_group:  # Now this is [Oval, Oval, 'whole']
@@ -759,7 +771,7 @@ class staff(Default_Widget):
 					drawable_shapes = note_block[:-1]
 					for shape in drawable_shapes:
 						self._shift_drawable_x(shape, dx)
-
+		
 		# Move ACCIDENTALS
 		for acc_block in accidental_shapes:
 			shapes, acc_type = acc_block
@@ -784,163 +796,189 @@ class staff(Default_Widget):
 		total_time,
 		countdown_time,
 		look_ahead_sec,
-		include_bars=False,
+		include_bars=True,  # Changed default to True
 		events=None
-		
 	):
 		"""
 		Amortized O(1) lookahead.
-		Bars are structural events and handled explicitly.
+		Bars are positioned based on their calculated x_position from create_dumb_events.
 		"""
-		screen_width=self.canvas.width
-		pixels_per_second=self.pixels_per_second
+		screen_width = self.canvas.width
+		pixels_per_second = self.pixels_per_second
 		
-
-
 		current_time = total_time - countdown_time
-		window_end = current_time + look_ahead_sec
-
+		window_end = current_time + (look_ahead_sec)
+		
 		if events is None:
 			events = self.current_event
-
+		
 		result = []
-
 		n = len(events)
 		i = self.event_index
 		commit_i = i
-
+		
 		while i < n:
 			event = events[i]
-			etype = event.get("type")
-
-			# ---------- BAR HANDLING ----------
-			if etype == "bar":
-				if include_bars:
-					result.append(event)
-				# bars do NOT advance commit_i
-				i += 1
-				continue
-
-			# ---------- TIMED EVENTS ----------
 			start = event.get("start_sec")
 			if start is None:
-				# malformed timed event → skip safely
 				i += 1
 				continue
-
-			start = float(start)
-
-			# permanently skip past events
-			if start < current_time:
-				commit_i = i + 1
-
-			# inside lookahead window
-			elif start < window_end:
-
-				#append x position
-				event['x_position']=screen_width - ((start- current_time)*self.pixels_per_second)
+			
+			start = float(start)*5
+			
+			# Calculate where this event would be on screen
+			time_diff = start - current_time
+			x_position = screen_width - ((start - current_time) * pixels_per_second)
+			
+			# Only permanently skip if it's completely off the LEFT edge
+			
+			if start < window_end:  # Within lookahead window OR still on screen
+				event['x_position'] = x_position
 				self.resize_shape(event)
-
 				result.append(event)
-
-			# future event → stop scanning
 			else:
-				break
-
+				break  # Future events
+			
 			i += 1
 
-		# only skip events that are definitely in the past
 		self.event_index = commit_i
-
 		return result
 
-	
+
 	def create_dumb_events(self, events):
-		tempo_scale = 5
-		dumb_events = []
-		global_note_counter = 0  # ← Tracks position across entire piece
-		
-		for i in events:
-			event_type = i.get("type")
+			dumb_events = []
+			global_note_counter = 0
 			
-			if event_type == "bar":
-				dumb_events.append({
-					"type": event_type,
-				})
-			
-			elif event_type == "chord":
-				pl = []
-				notes = i.get("notes", [])
-				accidentals_list = {}
-				jumped = False
-				last_played_index = float('inf')
-				note_shapes_list = []
+			last_playable_shape = None  # Changed from None to 0
+			pending_bar_index = None
+			for index,i in enumerate(events):
+				event_type = i.get("type")
 				
-				# First, build the pitch list
-				for note in notes:
-					pitch = note.get('pitch')
-					pl.append(pitch)
-				
-				# NOW iterate with BOTH counters
-				for pl_index, pitch in enumerate(pl, start=1):  # ← KEEP enumerate for chord-local index
-					global_note_counter += 1  # ← Also increment global counter
-					
-					print(f"\n=== Processing pitch {pitch} (note #{global_note_counter}, chord position #{pl_index}) ===")
-					
-					tscale_note = str(self.midi_to_scale_note(pitch))
-					print(f"tscale_note: {tscale_note}")
-					
-					note_name = tscale_note[0]
-					note_octave = tscale_note[-1]
-					
-					# Extract accidental
-					new_scale_note = tscale_note[0]
-					tlen = len(tscale_note)
-					
-					if tlen > 3:
-						new_scale_note = new_scale_note + tscale_note[1] + tscale_note[2]
-					elif tlen > 2:
-						new_scale_note = new_scale_note + tscale_note[1]
-					
-					print(f"note_name: {note_name}")
-					print(f"note_octave: {note_octave}")
-					print(f"new_scale_note: {new_scale_note}")
-					print(f"accidentals_list BEFORE: {accidentals_list}")
-					
-					# Handle B# edge case
-					if new_scale_note == "B#":
-						lookup_key = str(note_name + str(int(note_octave) - 1))
+				if event_type == "bar":
+					bar_shapes = shape_constructor(
+						shape_x=0,
+						canvas_height=self.canvas.height,
+						top_margin=self.top_margin,
+						paint=self.stroke_paint,
+						type="bar"
+					)
+					if last_playable_shape == None:
+						dumb_events.append({
+							"type": event_type,
+							"shapes": bar_shapes,
+							"start_sec": i.get('start_sec'),
+						})
 					else:
-						lookup_key = str(note_name + note_octave)
+						pending_bar_index = index
+						dumb_events.append({
+							"type": event_type,
+							"shapes": bar_shapes,
+							"start_sec": i.get('start_sec'),
+						})
+					# Bar logic removed - implement your own here
+					pass
+				
+				elif event_type == "chord":
+					pl = []
+					notes = i.get("notes", [])
+					accidentals_list = {}
+					jumped = False
+					last_played_index = float('inf')
+					note_shapes_list = []
 					
-					if lookup_key in self.note_dic:
-						index = self.note_dic[lookup_key]
-						print(f"index for {lookup_key}: {index}")
+					# Initialize current_position for this chord
+					current_position = self.position
+					
+					# First, build the pitch list
+					for note in notes:
+						pitch = note.get('pitch')
+						pl.append(pitch)
+					
+					# NOW iterate with BOTH counters
+					for pl_index, pitch in enumerate(pl, start=1):
+						global_note_counter += 1
 						
-						note_shapes, accidentals_list, jumped, last_played_index = self.make_note(
-							pl_index,  # ← Use chord-local index for pitch_list access
-							position=None,
-							index=index,
-							accidentals_list=accidentals_list,
-							new_scale_note=new_scale_note,
-							pitch_list=pl,
-							jumped=jumped,
-							last_played_index=last_played_index
+						print(f"\n=== Processing pitch {pitch} (note #{global_note_counter}, chord position #{pl_index}) ===")
+						
+						tscale_note = str(self.midi_to_scale_note(pitch))
+						print(f"tscale_note: {tscale_note}")
+						
+						note_name = tscale_note[0]
+						note_octave = tscale_note[-1]
+						
+						# Extract accidental
+						new_scale_note = tscale_note[0]
+						tlen = len(tscale_note)
+						
+						if tlen > 3:
+							new_scale_note = new_scale_note + tscale_note[1] + tscale_note[2]
+						elif tlen > 2:
+							new_scale_note = new_scale_note + tscale_note[1]
+						
+						print(f"note_name: {note_name}")
+						print(f"note_octave: {note_octave}")
+						print(f"new_scale_note: {new_scale_note}")
+						print(f"accidentals_list BEFORE: {accidentals_list}")
+						
+						# Handle B# edge case
+						if new_scale_note == "B#":
+							lookup_key = str(note_name + str(int(note_octave) - 1))
+						else:
+							lookup_key = str(note_name + note_octave)
+						
+						if lookup_key in self.note_dic:
+							index = self.note_dic[lookup_key]
+							print(f"index for {lookup_key}: {index}")
+							
+							note_shapes, accidentals_list, jumped, last_played_index, current_position = self.make_note(
+								pl_index,
+								position=current_position,
+								index=index,
+								accidentals_list=accidentals_list,
+								new_scale_note=new_scale_note,
+								pitch_list=pl,
+								jumped=jumped,
+								last_played_index=last_played_index
+							)
+							
+							print(f"accidentals_list AFTER: {accidentals_list}")
+							note_shapes_list.append(note_shapes)
+						else:
+							print(f"SKIPPED: {lookup_key} not in note_dic")
+									
+					##complete unfinished bars
+					if pending_bar_index is not None:  # Also improved this check
+						note1 = last_playable_shape
+						note2 = i
+						bar_shapes = shape_constructor(
+							shape_x=0,
+							canvas_height=self.canvas.height,
+							top_margin=self.top_margin,
+							paint=self.stroke_paint,
+							type="bar"
 						)
-						
-						print(f"accidentals_list AFTER: {accidentals_list}")
-						note_shapes_list.append(note_shapes)
-					else:
-						print(f"SKIPPED: {lookup_key} not in note_dic")
-				
-				# make_accidentals()
-				dumb_events.append({
-					"type": event_type,
-					"shapes": [note_shapes_list, self.make_accidentals(accidentals_list)],
-					"start_sec": i.get('start_sec') * tempo_scale,
-				})
-		
-		return dumb_events
+						dumb_events[pending_bar_index] = {  # Changed from events to dumb_events
+							"type": "bar",  # Added type
+							"shapes": bar_shapes,
+							"start_sec": ((note1["start_sec"]) + note2["start_sec"]) / 2
+						}
+						pending_bar_index = None
+					
+					dumb_events.append({
+						"type": event_type,
+						"shapes": [note_shapes_list, self.make_accidentals(accidentals_list)],
+						"start_sec": i.get('start_sec'),
+					})
+					last_playable_shape=i
+			
+			return dumb_events	
+
+	def _find_next_note_time(self, events, current_div):
+		"""Helper function to find the time of the next note after current_div"""
+		for event in events:
+			if event.get("type") == "chord" and event.get("start_div") > current_div:
+				return event.get("start_sec")
+		return None
 
 
 	def change_octave_field(self,x,y,z,param):
@@ -973,7 +1011,8 @@ class staff(Default_Widget):
 			
 			##parse music xml
 			events,self.total_score_time_sec = parse_musicxml_chords("/home/soup/Downloads/Fur_Elise/score.xml")
-			self.total_score_time_sec=self.total_score_time_sec*5
+			
+
 			self.current_event=self.create_dumb_events(events)
 			
 			print(f"{len(self.current_event)} is dumb vs {len(events)} ")
@@ -1027,7 +1066,7 @@ class staff(Default_Widget):
 		self.event_index=0
 		self.current_event=None
 		self.total_score_time_sec=0
-		self.pixels_per_second=70
+		self.pixels_per_second=120
 
 
 
@@ -1532,213 +1571,61 @@ class staff(Default_Widget):
 
 		return curr_positions
 	
-	def make_accidentals(self,accidentals_list,width=5):
-		d_height=self.d_height	
-		d_width=self.d_width
-		position=self.position
-		og_position=self.og_position
-		return_list	=[]
+	def make_accidentals(self, accidentals_list, width=5):
+		d_height = self.d_height	
+		d_width = self.d_width
+		position = self.position
+		og_position = self.og_position
+		return_list = []
 		width = 8
 		prev_positions = None
-		accidental_type=None
+		accidental_type = None
 
-			
 		for i in accidentals_list:
-			row=accidentals_list[i]
+			row = accidentals_list[i]
 			print(f"DEBUG: Processing index {i}, row: {row}")
 			if (i+1 not in accidentals_list):
 				prev_positions = None
 
-
-			curr = self.assign_positions(row, i,prev_positions, width)
+			curr = self.assign_positions(row, i, prev_positions, width)
 			print(f"DEBUG: Positions assigned: {curr}")
 			prev_positions = set(curr)
 
-			count=0
+			count = 0
 			y = self.top_margin + i/2 * self.line_spacing
 			
 			for x in row:
-				# ← ADD THIS UNPACKING BEFORE THE MATCH:
-				if isinstance(x, tuple):  # XML mode - tuple of (accidental, position)
+				# ← UNPACK TUPLE OR USE STRING
+				if isinstance(x, tuple):
 					accidental_char, note_x = x
-				else:  # User notes mode - just the accidental character
+					print(f"DEBUG: Unpacked tuple - accidental={accidental_char}, note_x={note_x}")
+				else:
 					accidental_char = x
 					note_x = og_position
+					print(f"DEBUG: Using string - accidental={accidental_char}, note_x={note_x}")
 				
-				position_mult=curr[count]+1
-				count+=1
-				print(f"positionmult: {position_mult}")
-				space_between=d_width/2
-				accidental_x=(note_x+d_width/2)-((d_width*0.9)*int(position_mult))  # ← Use note_x instead of og_position
-				print(f"DEBUG: accidental_x for {accidental_char} = {accidental_x}, note_x={note_x}, og_position={og_position}, d_width={d_width}")
+				position_mult = curr[count] + 1
+				count += 1
+				
+				accidental_x = (note_x + d_width/2) - ((d_width*0.9)*int(position_mult))
+				print(f"DEBUG: accidental_x for {accidental_char} = {accidental_x}, note_x={note_x}, og_position={og_position}")
 
-				#---------------------------------------#
-				#---------------------------------------#
+				# Use shape_constructor for accidentals
+				accidental_shapes = shape_constructor(
+					shape_x=accidental_x,
+					shape_y=y,
+					shape_width=d_width,
+					shape_height=d_height,
+					type=accidental_char,
+					paint=self.stroke_paint
+				)
+				
+				if accidental_shapes is None:
+					raise ValueError(f"shape_constructor returned None for accidental '{accidental_char}' at x={accidental_x}, y={y}, width={d_width}, height={d_height}")
+				
+				return_list.extend(accidental_shapes)
 
-				# ← NOW USE accidental_char IN THE MATCH:
-				match accidental_char:  # ← Changed from 'x' to 'accidental_char'
-					case "#":
-						accidental_type='#'
-						print("case FOUND")
-						#art for making sharps
-						
-
-						sharp_line1 = cv.Line(
-							accidental_x+(d_width/3), y+((d_height/4)-d_height/7),
-							accidental_x-(d_width/3), y+(d_height/4),
-							paint=self.stroke_paint,
-
-						)
-
-						sharp_line2 = cv.Line(
-							accidental_x+(d_width/3), y-((d_height/4)+d_height/7),
-							accidental_x-(d_width/3), y-(d_height/4),
-							paint=self.stroke_paint,
-
-						)						
-
-						sharp_vert1=cv.Line(
-							accidental_x+(d_width/7), y-(d_width-(d_width/3)),
-							accidental_x+(d_width/7), y+(d_width-(d_width/3)),
-							paint=self.stroke_paint,
-
-						)
-
-						sharp_vert2=cv.Line(
-							accidental_x-(d_width/7), y-(d_width-(d_width/3)),
-							accidental_x-(d_width/7), y+(d_width-(d_width/3)),
-							paint=self.stroke_paint,
-
-						)
-
-
-
-						return_list.append(([sharp_line1,sharp_line2,sharp_vert1,sharp_vert2],accidental_type))
-
-					case "b":
-						
-						accidental_type='b'
-						print("only b")
-
-						#newcolor=copy.copy(self.stroke_paint)
-						#newcolor.color=ft.Colors.GREEN_ACCENT_400
-						
-						flat_vert1=cv.Line(
-							accidental_x-(d_width/20), y-(d_width-(d_width/4)),
-							accidental_x-(d_width/20), y+(d_width-(d_width/1.4)),
-							paint=self.stroke_paint,
-							)
-
-						flat_curve=cv.Path(
-							[
-								#starts here
-								cv.Path.MoveTo(accidental_x-(d_width/20), y+(d_width-(d_width/1.3))),
-								cv.Path.QuadraticTo(
-									accidental_x+(d_width*0.6),y-(d_width*0.2),#curve towards this point
-									(accidental_x-(d_width/20 )),y+(d_width-(d_width*1.2)),#point to reach
-									1 #WEIGHT
-									),
-								cv.Path.Close(),
-							],
-							paint=self.stroke_paint,
-							)
-
-
-
-
-						return_list.append(([flat_vert1,flat_curve],accidental_type))
-			
-
-					case "N":
-
-						accidental_type='N'
-						nat_vert1=cv.Line(
-							accidental_x+(d_width/5), y-(d_width-(d_width/2)),
-							accidental_x+(d_width/5), y+(d_width-(d_width/2)),
-							paint=self.stroke_paint,
-
-						)
-
-						nat_vert2=cv.Line(
-							accidental_x-(d_width/5), y-(d_width-(d_width/2)),
-							accidental_x-(d_width/5), y+(d_width-(d_width/2)),
-							paint=self.stroke_paint,
-
-						)
-
-						cross_line=cv.Line(
-							accidental_x-(d_width/5), y-(d_width-(d_width/2)),
-							accidental_x+(d_width/5), y+(d_width-(d_width/2)),
-							paint=self.stroke_paint,
-
-						)
-
-
-						return_list.append(([nat_vert1,nat_vert2,cross_line], accidental_type))
-
-						pass
-
-					case "##":
-
-						accidental_type='##'
-						cross_line1=cv.Line(
-							accidental_x-(d_width/5), y-(d_width-(d_width/2)),
-							accidental_x+(d_width/5), y+(d_width-(d_width/2)),
-							paint=self.stroke_paint,
-							)
-						cross_line2=cv.Line(
-							accidental_x + (d_width / 5), y - (d_width - (d_width / 2)),
-							accidental_x - (d_width / 5), y + (d_width - (d_width / 2)),
-							paint=self.stroke_paint,
-
-							)
-						return_list.append(([cross_line1,cross_line2],accidental_type))
-						pass
-
-					case "bb":
-						print("bb")
-
-						accidental_type='bb'
-						flat_vert1=cv.Line(
-							accidental_x-(d_width/2.3), y-(d_width-(d_width/4)),
-							accidental_x-(d_width/2.3), y+(d_width-(d_width/1.4)),
-							paint=self.stroke_paint,
-							)
-
-						flat_curve1=cv.Path(
-							[
-								#starts here
-								cv.Path.MoveTo(accidental_x-(d_width/2.3), y+(d_width-(d_width/1.3))),
-								cv.Path.QuadraticTo(
-									accidental_x+(d_width*0.27),y-(d_width*0.2),#curve towards this point
-									(accidental_x-(d_width/2.3)),y+(d_width-(d_width*1.2)),#point to reach
-									1 #WEIGHT
-									),
-								cv.Path.Close(),
-							],
-							paint=self.stroke_paint,
-							)
-						flat_vert2=cv.Line(
-							accidental_x-(d_width/10), y-(d_width-(d_width/4)),
-							accidental_x-(d_width/10), y+(d_width-(d_width/1.4)),
-							paint=self.stroke_paint,
-							)
-
-						flat_curve2=cv.Path(
-							[
-								#starts here
-								cv.Path.MoveTo(accidental_x-(d_width/10), y+(d_width-(d_width/1.3))),
-								cv.Path.QuadraticTo(
-									accidental_x+(d_width*0.5),y-(d_width*0.2),#curve towards this point
-									(accidental_x-(d_width/10)),y+(d_width-(d_width*1.2)),#point to reach
-									1 #WEIGHT
-									),
-								cv.Path.Close(),
-							],
-							paint=self.stroke_paint,
-							)
-						return_list.append(([flat_vert1,flat_curve1,flat_vert2,flat_curve2],accidental_type))
-
+		print(f"DEBUG: make_accidentals returning {len(return_list)} accidentals")
 		return return_list
 
 
@@ -1746,190 +1633,145 @@ class staff(Default_Widget):
 
 
 
-
 	def make_note(
-		self,
-		pl_index,
-		position=None,
-		index=6,
-		accidentals_list=None, #text base references to the accidentals ie ['#'#']
-		new_scale_note=None,
-		pitch_list=None,
-		jumped=None,
-		last_played_index=None,
-		duration=None
-		):
+			self,
+			pl_index,
+			position=None,
+			index=6,
+			accidentals_list=None,
+			new_scale_note=None,
+			pitch_list=None,
+			jumped=None,
+			last_played_index=None,
+			duration=None
+			):
 		return_list=[]
 		
 		d_height=self.d_height	
 		d_width=self.d_width
-		position=self.position
+		
+		# ← Don't overwrite position!
+		if position is None:
+			position = self.position
+		
 		og_position=self.og_position
+		is_xml_mode = (accidentals_list is not None)
 
 		if accidentals_list==None:
 			accidentals=self.accidentals
-			is_xml_mode=False
 		else:
-			is_xml_mode=True
 			accidentals= accidentals_list
 		
-
 		if new_scale_note==None:
 			new_scale_note=self.new_scale_note
 
 		if pitch_list==None:
 			pitch_list=self.pl
 		
-		
-
 		default_jump=False
 		if jumped==None:
-
 			default_jump=True	
-
 			jumped=self.jumped
-
 
 		default_last_played=False
 		if last_played_index==None:
 			default_last_played=True
 			last_played_index=self.last_played_index
 
-		l_count=0
-
-		
-		
-
 		print(f"Index is: {index}")
-
-
 		
 		y = self.top_margin + index/2 * self.line_spacing
 		
-
-		#logic for notes to appear ONTOP AND to the side if the notes are one note apart
-		if (self.last_played_index-1 == index and not jumped):
-			position=position+(d_width*0.8)
-			jumped	=True
-		#logic for notes to appear to the side of the same note if the notes are the same but different suffix ie: C and C#
-		elif (self.last_played_index == index) and not jumped:
-			position=position+d_width
-			jumped =True
-
-		else:
-			jumped=False
-
-
-		x =  position
+		# ← Calculate FINAL position
+		final_position = position
 		
-		print(f"DEBUG make_note: position={position}, self.position={self.position}, self.og_position={self.og_position}")
+		#logic for notes to appear ONTOP AND to the side if the notes are one note apart
+		if (last_played_index-1 == index and not jumped):
+			final_position = position + (d_width*0.8)
+			jumped = True
+		#logic for notes to appear to the side of the same note if the notes are the same but different suffix ie: C and C#
+		elif (last_played_index == index) and not jumped:
+			final_position = position + d_width
+			jumped = True
+		else:
+			jumped = False
+
+		x = final_position
+		
+		print(f"DEBUG make_note: final_position={final_position}, position={position}, self.position={self.position}")
 		
 		if duration == None:
-			#whole note
-			note_type='whole'
-			# Create the oval 
-			b_dot = cv.Oval(
-				x=x,
-				y=y- (d_height/2),
-				width=d_width,   # Width of the oval
-				height=d_height,   # Height of the oval (change for desired oval shape)
-				paint=ft.Paint(
-					color=ft.Colors.BLACK,
-					style=ft.PaintingStyle.FILL
-				)
+			# Use shape_constructor for whole note
+			note_shapes = shape_constructor(
+				shape_x=x,
+				shape_y=y,
+				shape_width=d_width,
+				shape_height=d_height,
+				type='whole',
+				paint=None  # Will use default black fill
 			)
-			# Width of the oval
-			w_dot = cv.Oval(
-				x=x+d_height/2.3,
-				y=y-d_width/4,
-				width=d_height/2.2,   # Width of the oval
-				height=d_width/2,   # Height of the oval (change for desired oval shape)
-				paint=ft.Paint(
-					color=ft.Colors.WHITE,
-					style=ft.PaintingStyle.FILL
-				)
-			)
-
-			d_line= cv.Line(
-				)
+			
+			if note_shapes is None:
+				raise ValueError(f"shape_constructor returned None for whole note at x={x}, y={y}, width={d_width}, height={d_height}")
+			
+			shapes, note_type = note_shapes[0]
+			b_dot, w_dot = shapes
+			d_line= cv.Line()
 			
 		##basically managing all the accidentals 
-
 		accidental=self.accidental_type(new_scale_note,always_accidental=False)
-		
-		print(f"DEBUG: accidental={accidental}, new_scale_note={new_scale_note}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
 
 		if accidental==None:
-
 			#case: when   #@[@]<-new note
 			if index in accidentals:
-				t_accidental = self.accidental_type(new_scale_note, always_accidental=True)
-				t_list = accidentals[index]
+				t_accidental =self.accidental_type(new_scale_note,always_accidental=True)
+				t_list=accidentals[index]
 				
-				print(f"DEBUG: Adding natural accidental {t_accidental} at index {index}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
-				
-				# Add tuple for XML mode, string for user notes
 				if is_xml_mode:
-					t_list.append((t_accidental, position))
+					t_list.append((t_accidental, final_position))  # ← Use final_position
 				else:
 					t_list.append(t_accidental)
 				
-				accidentals[index] = t_list
-				print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
+				accidentals[index]=t_list
 
 			else:
+				ranged_list =range(3)
 
-				ranged_list = range(3)
-
-
-				#case: when #@ <-old note C#2
-				#			 -
-				#			[@]<-new note C#3
-				index_to_change = index
+				index_to_change=index
 				for i in ranged_list:
-					index_to_change += 7
+					index_to_change+=7
 					if index_to_change in accidentals:
-						t_accidental = self.accidental_type(new_scale_note, always_accidental=True)
+						t_accidental =self.accidental_type(new_scale_note,always_accidental=True)
 						
 						if index in accidentals:
-							t_list = accidentals[index]
+							t_list=accidentals[index]
 						else:
-							t_list = []
+							t_list=[]
 						
-						print(f"DEBUG: Propagating accidental {t_accidental} from {index_to_change} to {index}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
-						
-						# Add tuple for XML mode, string for user notes
 						if is_xml_mode:
-							t_list.append((t_accidental, position))
+							t_list.append((t_accidental, final_position))
 						else:
 							t_list.append(t_accidental)
 						
-						accidentals[index] = t_list
-						print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
+						accidentals[index]=t_list
 						del accidentals[index_to_change]
 
-				index_to_change = index
+				index_to_change=index
 				for i in ranged_list:
-					index_to_change -= 7
+					index_to_change-=7
 					if index_to_change in accidentals:
-						t_accidental = self.accidental_type(new_scale_note, always_accidental=True)
-						t_list = accidentals[index]
+						t_accidental =self.accidental_type(new_scale_note,always_accidental=True)
+						t_list=accidentals[index]
 						
-						print(f"DEBUG: Propagating accidental {t_accidental} from {index_to_change} to {index}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
-						
-						# Add tuple for XML mode, string for user notes
 						if is_xml_mode:
-							t_list.append((t_accidental, position))
+							t_list.append((t_accidental, final_position))
 						else:
 							t_list.append(t_accidental)
 						
-						accidentals[index] = t_list
-						print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
+						accidentals[index]=t_list
 						del accidentals[index_to_change]
 
 		else:
-
-
 			if accidental == "#":
 				print("found accidental sharp")
 			elif accidental == "b":
@@ -1938,53 +1780,41 @@ class staff(Default_Widget):
 				print("found accidental Natural")
 
 			if index in accidentals:
-				t_list = accidentals[index]
+				t_list=accidentals[index]
 				
-				print(f"DEBUG: Adding accidental {accidental} to existing list at index {index}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
-				
-				# Store as tuple for XML, string for user notes
 				if is_xml_mode:
-					t_list.append((accidental, position))  # ← Store position for XML
+					t_list.append((accidental, final_position))
 				else:
-					t_list.append(accidental)  # ← Just string for user notes
-				accidentals[index] = t_list
-				print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
+					t_list.append(accidental)
+				
+				accidentals[index]=t_list
 			else:
-				if self.last_played_index == index:
+				if last_played_index == index:
 					if pl_index >= 2:
-						old_note = self.midi_to_scale_note(pitch_list[pl_index-2])
-						old_accidental = self.accidental_type(old_note[:-1], always_accidental=True)
+						old_note=self.midi_to_scale_note(pitch_list[pl_index-2])
+						print(f"old note {old_note}")
 						
-						print(f"DEBUG: Creating new list with old_accidental={old_accidental} and accidental={accidental}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
+						old_accidental=self.accidental_type(old_note[:-1],always_accidental=True)
 						
 						if is_xml_mode:
-							accidentals[index] = [(old_accidental, position), (accidental, position)]
+							accidentals[index]=[(old_accidental, final_position), (accidental, final_position)]
 						else:
-							accidentals[index] = [old_accidental, accidental]
-						print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
+							accidentals[index]=[old_accidental, accidental]
 					else:
-						print(f"DEBUG: Creating new list with just accidental={accidental}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
-						
 						if is_xml_mode:
-							accidentals[index] = [(accidental, position)]
+							accidentals[index]=[(accidental, final_position)]
 						else:
-							accidentals[index] = [accidental]
-						print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
+							accidentals[index]=[accidental]
 				else:
-					print(f"DEBUG: Creating new list with accidental={accidental}, is_xml_mode={is_xml_mode}")  # ← ADD THIS
-					
 					if is_xml_mode:
-						accidentals[index] = [(accidental, position)]
+						accidentals[index]=[(accidental, final_position)]
 					else:
-						accidentals[index] = [accidental]
-					print(f"DEBUG: accidentals[{index}] = {accidentals[index]}")  # ← ADD THIS
+						accidentals[index]=[accidental]
 
 		if accidentals_list==None:
 			self.accidentals=accidentals
-
 		else:
 			accidentals_list=accidentals
-
 
 		if default_jump == True:
 			self.jumped=jumped
@@ -1993,83 +1823,85 @@ class staff(Default_Widget):
 			self.last_played_index=last_played_index
 
 		try:
-
-
-
 			self.last_played_index=index
 			print("setting index for next time!!")
-
 		except UnboundLocalError:
 			print("error 1647 ds")
 			pass
 
-
-
-
-
 		return_list.append([b_dot,w_dot,note_type])	
 		
 		if accidentals_list != None:
-			####yoo this shit is like looking at a room in a submarine 
-			####and realizing and there is a hole held by duct-tape and its about to burst
-			return return_list,accidentals_list,jumped,last_played_index
-		
+			# ← RETURN final_position too!
+			return return_list, accidentals_list, jumped, last_played_index, final_position
 		else:
 			return return_list
 
 
-
-
-	async def tick(self,updated=False):
-		#print("staff ick")
-		canvas_update=False
-		t_update=False
-		events_to_spawn=[]
-
+	async def tick(self, updated=False):
+		"""
+		Update canvas with user notes and spawned events from the score timer.
+		"""
+		canvas_update = False
+		t_update = False
+		events_to_spawn = []
+		
 		if self.score_timer and self.score_timer.running():
-
 			self.score_timer.tick()
 			print(self.score_timer.remaining())
-
 			events_to_spawn = self.get_events_lookahead_and_place(
 				total_time=self.total_score_time_sec,
 				countdown_time=self.score_timer.remaining(),
 				look_ahead_sec=self.look_ahead_sec,
-
-				)
+			)
 			print(len(events_to_spawn))
-
-			t_update=True
-			canvas_update=True
-
-
+			t_update = True
+			canvas_update = True
+		
 		if updated:
-			t_update=True
-
-
+			t_update = True
+		
 		if t_update:
-			print(f"the numver of items in user shapes is{len(self.user_note_shapes)}")
+			print(f"the number of items in user shapes is {len(self.user_note_shapes)}")
 			
+			# Keep only the staff lines, remove any previous note/event shapes
+			self.canvas.shapes = self.canvas.shapes[:(self.num_lines)]
 			
-			self.canvas.shapes=self.canvas.shapes[:(self.num_lines)]
+			# Add user's note shapes
+			for shape in self.user_note_shapes:
+				self.canvas.shapes.append(shape)
 			
-			
-			for i in self.user_note_shapes:
-				self.canvas.shapes.append(i)
-			
-			
-			####xml notes 
+			# Add spawned event shapes from the score
 			for event in events_to_spawn:
-
-				#print(event)
-				for note_group in event['shapes'][0]:
-					for note in note_group:          # unwrap the extra list
-						for shape in note[:-1]:      # drop 'whole'
+				event_type = event.get("type")
+				
+				if event_type == "bar":
+					# Bar shapes come directly from shape_constructor: [([bar_line], 'bar')]
+					bar_shapes = event['shapes']
+					for shape_tuple in bar_shapes:
+						shapes_list, shape_type = shape_tuple
+						for shape in shapes_list:
 							self.canvas.shapes.append(shape)
-				for accidental_shapes, accidental_sign in event['shapes'][1]:
-					for shape in accidental_shapes:
-						self.canvas.shapes.append(shape)
-
+				
+				elif event_type == "chord":
+					# Chord shapes: [note_shapes_list, accidental_shapes_list]
+					note_shapes, accidental_shapes = event['shapes']
+					
+					# note_shapes_list is [[[b_dot, w_dot, 'whole']], [[b_dot, w_dot, 'whole']], ...]
+					# So we need to go one level deeper
+					for note_wrapper in note_shapes:
+						for note_item in note_wrapper:
+							# note_item is [b_dot, w_dot, 'whole']
+							for shape in note_item[:-1]:  # skip the 'whole' type string at the end
+								self.canvas.shapes.append(shape)
+					
+					# accidental_shapes is the return from make_accidentals()
+					# which is a list of ([shapes], type) tuples
+					for acc_tuple in accidental_shapes:
+						shapes_list, acc_type = acc_tuple
+						for shape in shapes_list:
+							self.canvas.shapes.append(shape)
+		
 		if canvas_update:
 			self.canvas.update()
 

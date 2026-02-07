@@ -164,6 +164,7 @@ class App_Inst(Default_Page):
 
 
 		await self.staff.update_func(pl)
+		await self.staff.tick(updated=True)
 		self.staff.Wbody.update()
 
 

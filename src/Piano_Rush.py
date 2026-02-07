@@ -29,7 +29,7 @@ class App_Inst(Default_Page):
 
 
 
-	async def note_update(e,self):
+	async def note_update(self,e):
 		start_time = time.time()
 
 		#self.body.content = ft.Row(alignment=ft.MainAxisAlignment.CENTER,controls=[self.KD.body])
