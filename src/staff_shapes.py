@@ -20,7 +20,7 @@ def shape_constructor(
 		canvas_height=None,
 		top_margin=None,
 		left_margin=None,
-		right_margin=None
+		right_margin=None,
 		):
 	# x and y are the coords of the note
 	# width and height are the same
@@ -241,6 +241,9 @@ def shape_constructor(
 			)
 			
 			return_list.append(([bar_line], accidental_type))
+
+
+		
 	
 	return return_list		
 

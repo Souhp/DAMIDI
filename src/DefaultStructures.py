@@ -809,6 +809,8 @@ class staff(Default_Widget):
 		current_time = total_time - countdown_time
 		window_end = current_time + (look_ahead_sec)
 		
+		
+
 		if events is None:
 			events = self.current_event
 		
@@ -828,7 +830,13 @@ class staff(Default_Widget):
 			
 			# Calculate where this event would be on screen
 			time_diff = start - current_time
-			x_position = screen_width - ((start - current_time) * pixels_per_second)
+			x_position = (screen_width - ((start - current_time) * pixels_per_second))
+
+			if current_time > start+2:
+				commit_i = i + 1
+				i += 1
+				continue
+
 			
 			# Only permanently skip if it's completely off the LEFT edge
 			
@@ -837,6 +845,7 @@ class staff(Default_Widget):
 				self.resize_shape(event)
 				result.append(event)
 			else:
+				
 				break  # Future events
 			
 			i += 1
@@ -868,6 +877,7 @@ class staff(Default_Widget):
 							"shapes": bar_shapes,
 							"start_sec": i.get('start_sec'),
 						})
+						print("unfinished")
 					else:
 						pending_bar_index = index
 						dumb_events.append({
@@ -894,9 +904,10 @@ class staff(Default_Widget):
 						pitch = note.get('pitch')
 						pl.append(pitch)
 					
-					# NOW iterate with BOTH counters
-					for pl_index, pitch in enumerate(pl, start=1):
+					for pl_index, note in enumerate(notes, start=1):
 						global_note_counter += 1
+						
+						pitch = note.get('pitch')
 						
 						print(f"\n=== Processing pitch {pitch} (note #{global_note_counter}, chord position #{pl_index}) ===")
 						
@@ -938,18 +949,20 @@ class staff(Default_Widget):
 								new_scale_note=new_scale_note,
 								pitch_list=pl,
 								jumped=jumped,
-								last_played_index=last_played_index
+								last_played_index=last_played_index,
+								duration=int(note.get('duration_div'))  # FIXED: Now using 'note' directly
 							)
 							
 							print(f"accidentals_list AFTER: {accidentals_list}")
 							note_shapes_list.append(note_shapes)
 						else:
 							print(f"SKIPPED: {lookup_key} not in note_dic")
-									
+						
 					##complete unfinished bars
 					if pending_bar_index is not None:  # Also improved this check
 						note1 = last_playable_shape
 						note2 = i
+						
 						bar_shapes = shape_constructor(
 							shape_x=0,
 							canvas_height=self.canvas.height,
@@ -1700,24 +1713,48 @@ class staff(Default_Widget):
 		
 		print(f"DEBUG make_note: final_position={final_position}, position={position}, self.position={self.position}")
 		
-		if duration == None:
-			# Use shape_constructor for whole note
-			note_shapes = shape_constructor(
-				shape_x=x,
-				shape_y=y,
-				shape_width=d_width,
-				shape_height=d_height,
-				type='whole',
-				paint=None  # Will use default black fill
-			)
-			
-			if note_shapes is None:
-				raise ValueError(f"shape_constructor returned None for whole note at x={x}, y={y}, width={d_width}, height={d_height}")
-			
-			shapes, note_type = note_shapes[0]
-			b_dot, w_dot = shapes
-			d_line= cv.Line()
-			
+
+		base_duration = duration
+		dotted = False
+
+		if duration in (54, 36, 18, 9, 4.5):  # example dotted values
+			dotted = True
+			base_duration = duration / 1.5
+
+		match base_duration:
+			case None | 36:
+				note_type = "whole"
+			case 24:
+				note_type = "half"
+			case 12:
+				note_type = "quarter"
+			case 6:
+				note_type = "eighth"
+			case 3:
+				note_type = "sixteenth"
+			case _:
+				note_type = "unknown"
+
+		if dotted:
+			note_type = f"dotted_{note_type}"
+
+
+		# Use shape_constructor for whole note
+		note_shapes = shape_constructor(
+			shape_x=x,
+			shape_y=y,
+			shape_width=d_width,
+			shape_height=d_height,
+			type='whole',
+			paint=None  # Will use default black fill
+		)
+		
+		if note_shapes is None:
+			raise ValueError(f"shape_constructor returned None for whole note at x={x}, y={y}, width={d_width}, height={d_height}")
+		
+		shapes, note_type = note_shapes[0]
+		d_line= cv.Line()
+		
 		##basically managing all the accidentals 
 		accidental=self.accidental_type(new_scale_note,always_accidental=False)
 
@@ -1829,7 +1866,7 @@ class staff(Default_Widget):
 			print("error 1647 ds")
 			pass
 
-		return_list.append([b_dot,w_dot,note_type])	
+		return_list.append([*shapes,note_type])	
 		
 		if accidentals_list != None:
 			# ← RETURN final_position too!
@@ -1862,7 +1899,7 @@ class staff(Default_Widget):
 			t_update = True
 		
 		if t_update:
-			print(f"the number of items in user shapes is {len(self.user_note_shapes)}")
+			#print(f"the number of items in user shapes is {len(self.user_note_shapes)}")
 			
 			# Keep only the staff lines, remove any previous note/event shapes
 			self.canvas.shapes = self.canvas.shapes[:(self.num_lines)]
@@ -1894,6 +1931,7 @@ class staff(Default_Widget):
 							# note_item is [b_dot, w_dot, 'whole']
 							for shape in note_item[:-1]:  # skip the 'whole' type string at the end
 								self.canvas.shapes.append(shape)
+								#print(shape)
 					
 					# accidental_shapes is the return from make_accidentals()
 					# which is a list of ([shapes], type) tuples

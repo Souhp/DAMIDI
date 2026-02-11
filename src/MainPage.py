@@ -81,12 +81,13 @@ class MainPage(Default_Page):
 
             )
 
-        ##THIS WILL BE REFARCORED TO HAVE CUSTOM GAMES AND MAKE IT EASIER TO ADD GAMES
+        ##THIS WILL BE REFACTORED TO HAVE CUSTOM GAMES AND MAKE IT EASIER TO ADD GAMES
         premadeGameList = {
 
             "Chord_Id_App":"game_icons/chord_id.png",
             "Piano_Rush":"game_icons/piano_rush.png",
             "Testing_App":"game_icons/chord_id.png"
+			
 
 
         }
