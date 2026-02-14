@@ -137,7 +137,7 @@ class Default_Page():
 				#print("aaa")
 
 			self.child_tick
-			await asyncio.sleep(0.05)
+			await asyncio.sleep(0.01)
 
 
 	async def tickmidi(self,name):
@@ -732,7 +732,7 @@ class staff(Default_Widget):
 			shape.x += dx
 			return
 
-	def resize_shape(self, shape_to_resize):
+	def edit_shape(self, shape_to_resize, color=None):
 		event_type = shape_to_resize.get("type")
 		x_target = shape_to_resize.get("x_position")
 		
@@ -755,6 +755,9 @@ class staff(Default_Widget):
 					shape_list, shape_type = shape_group
 					for shape in shape_list:
 						self._shift_drawable_x(shape, dx)
+						if color is not None:
+							shape.paint=copy.copy(shape.paint)
+							shape.paint.color = color
 			return
 		
 		# ---------- HANDLE CHORDS ----------
@@ -764,19 +767,26 @@ class staff(Default_Widget):
 		note_shapes, accidental_shapes = shape_to_resize["shapes"]
 		
 		# Move NOTES - handle the extra nesting!
-		for note_group in note_shapes:  # This is [[Oval, Oval, 'whole']]
-			for note_block in note_group:  # Now this is [Oval, Oval, 'whole']
+		for note_group in note_shapes:
+			for note_block in note_group:
 				if isinstance(note_block, list):
 					note_type = note_block[-1]
 					drawable_shapes = note_block[:-1]
 					for shape in drawable_shapes:
 						self._shift_drawable_x(shape, dx)
+						if color is not None:
+							shape.paint=copy.copy(shape.paint)
+							shape.paint.color = color
 		
 		# Move ACCIDENTALS
 		for acc_block in accidental_shapes:
 			shapes, acc_type = acc_block
 			for shape in shapes:
 				self._shift_drawable_x(shape, dx)
+				if color is not None:
+
+					shape.paint=copy.copy(shape.paint)
+					shape.paint.color = color
 
 	def compute_lookahead_seconds(
 		self,
@@ -796,21 +806,19 @@ class staff(Default_Widget):
 		total_time,
 		countdown_time,
 		look_ahead_sec,
-		include_bars=True,  # Changed default to True
+		include_bars=True,
 		events=None
 	):
 		"""
 		Amortized O(1) lookahead.
-		Bars are positioned based on their calculated x_position from create_dumb_events.
 		"""
 		screen_width = self.canvas.width
 		pixels_per_second = self.pixels_per_second
 		
 		current_time = total_time - countdown_time
-		window_end = current_time + (look_ahead_sec)
+		window_end = current_time + look_ahead_sec
+		temp_midi_dict = self.current_pressed_midi.copy()
 		
-		
-
 		if events is None:
 			events = self.current_event
 		
@@ -826,33 +834,54 @@ class staff(Default_Widget):
 				i += 1
 				continue
 			
-			start = float(start)*5
+			start = float(start) * 5
 			
-			# Calculate where this event would be on screen
-			time_diff = start - current_time
-			x_position = (screen_width - ((start - current_time) * pixels_per_second))
-
-			if current_time > start+2:
+			if current_time > start + 1.5:
 				commit_i = i + 1
 				i += 1
 				continue
-
 			
-			# Only permanently skip if it's completely off the LEFT edge
+			# ✅ OPTIMIZATION 1: Early break
+			if start >= window_end:
+				break
 			
-			if start < window_end:  # Within lookahead window OR still on screen
-				event['x_position'] = x_position
-				self.resize_shape(event)
-				result.append(event)
-			else:
+			event['x_position'] = screen_width - ((start - current_time) * pixels_per_second)
+			press_window = self.press_window_sec
+			
+			if current_time >= start - press_window and current_time <= start + press_window:
+				temp_midi_dict = self.current_pressed_midi
 				
-				break  # Future events
+				if "pitch_list" in event:
+					pitch_list = event["pitch_list"]  # ✅ Define pitch_list
+					
+					if len(pitch_list) > 1:
+						# ✅ OPTIMIZATION 2: Set subset check
+						if set(pitch_list).issubset(temp_midi_dict):  #  Use temp_midi_dict
+							self.edit_shape(event, color=ft.Colors.GREEN)
+							# ✅ FIDelete ALL matched notes, not just first
+							for pitch in pitch_list:
+								del temp_midi_dict[pitch]
+							self.current_pressed_midi = temp_midi_dict
+						else:
+							self.edit_shape(event)
+					
+					# ✅ Restore single-note case
+					elif pitch_list[0] in temp_midi_dict:
+						self.edit_shape(event, color=ft.Colors.GREEN)
+						del temp_midi_dict[pitch_list[0]]
+						self.current_pressed_midi = temp_midi_dict
+					else:
+						self.edit_shape(event)
+				else:
+					self.edit_shape(event)
+			else:
+				self.edit_shape(event)
 			
-			i += 1
-
+			result.append(event)
+			i += 1  # ✅Removed duplicate else/break
+		
 		self.event_index = commit_i
 		return result
-
 
 	def create_dumb_events(self, events):
 			dumb_events = []
@@ -976,11 +1005,19 @@ class staff(Default_Widget):
 							"start_sec": ((note1["start_sec"]) + note2["start_sec"]) / 2
 						}
 						pending_bar_index = None
-					
+				
+
+
+
+
+
+
+
 					dumb_events.append({
 						"type": event_type,
 						"shapes": [note_shapes_list, self.make_accidentals(accidentals_list)],
 						"start_sec": i.get('start_sec'),
+						"pitch_list": pl
 					})
 					last_playable_shape=i
 			
@@ -1080,9 +1117,12 @@ class staff(Default_Widget):
 		self.current_event=None
 		self.total_score_time_sec=0
 		self.pixels_per_second=120
+		
 
-
-
+		self.press_window_sec=0.2
+		self.current_pressed_midi={}
+		
+		
 		self.paused_time_remaining = None
 		self.user_note_shapes=[]
 
@@ -1340,8 +1380,8 @@ class staff(Default_Widget):
 
 		#print(f"list of shapes:  {self.canvas.shapes}")
 		
-
-
+		old_pressed_midi=self.current_pressed_midi
+		self.current_pressed_midi={}
 		pl_count=0
 		for i in self.pl:
 			pl_count+=1
@@ -1385,6 +1425,14 @@ class staff(Default_Widget):
 					index =self.note_dic[str(note_name+note_octave)]
 
 				note_shapes=self.make_note(pl_count,position=None,index=index)
+				
+
+				##lets me know if and when the user pressed keys and to remember it
+				if self.score_timer:
+					if i in old_pressed_midi:
+						pass
+					else:
+						self.current_pressed_midi[i]=self.score_timer.remaining()
 
 
 				###what the fuck does this do???????? 
@@ -1882,16 +1930,31 @@ class staff(Default_Widget):
 		canvas_update = False
 		t_update = False
 		events_to_spawn = []
+
+
 		
 		if self.score_timer and self.score_timer.running():
 			self.score_timer.tick()
+
+			
+
+			temp_pressed=self.current_pressed_midi.copy()
+
+			for i in temp_pressed:
+				if temp_pressed[i] > self.score_timer.remaining()+0.25:
+					del self.current_pressed_midi[i]
+
+			self.current_pressed_midi=temp_pressed
+
+			
+
 			print(self.score_timer.remaining())
 			events_to_spawn = self.get_events_lookahead_and_place(
 				total_time=self.total_score_time_sec,
 				countdown_time=self.score_timer.remaining(),
 				look_ahead_sec=self.look_ahead_sec,
 			)
-			print(len(events_to_spawn))
+			#print(len(events_to_spawn))
 			t_update = True
 			canvas_update = True
 		
@@ -1905,8 +1968,7 @@ class staff(Default_Widget):
 			self.canvas.shapes = self.canvas.shapes[:(self.num_lines)]
 			
 			# Add user's note shapes
-			for shape in self.user_note_shapes:
-				self.canvas.shapes.append(shape)
+			self.canvas.shapes.extend(self.user_note_shapes)
 			
 			# Add spawned event shapes from the score
 			for event in events_to_spawn:

@@ -235,7 +235,7 @@ def shape_constructor(
 			# Bar line spans exactly from top staffline to bottom staffline
 			# Only needs x position - y span is always the same (stafflines)
 			bar_line = cv.Line(
-				shape_x, canvas_height,
+				shape_x, canvas_height -top_margin*1.2,
 				shape_x, top_margin,
 				paint=paint,
 			)

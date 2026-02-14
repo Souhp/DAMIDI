@@ -86,8 +86,8 @@ class MainPage(Default_Page):
 
             "Chord_Id_App":"game_icons/chord_id.png",
             "Piano_Rush":"game_icons/piano_rush.png",
-            "Testing_App":"game_icons/chord_id.png"
-			
+            "Testing_App":"game_icons/chord_id.png",
+			"guessChord":"game_icons/chord_id.png",
 
 
         }
