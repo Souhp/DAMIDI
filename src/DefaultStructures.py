@@ -690,7 +690,7 @@ class staff(Default_Widget):
 		
 		if button.data["playing"]:
 			# Currently playing → pause
-			self.paused_time_remaining = self.score_timer.remaining()  # ← ADD THIS
+			self.paused_time_remaining = self.score_timer.remaining()
 			self.score_timer.stop()
 			button.icon = ft.Icons.PLAY_ARROW
 			button.tooltip = "Play"
@@ -755,39 +755,43 @@ class staff(Default_Widget):
 					shape_list, shape_type = shape_group
 					for shape in shape_list:
 						self._shift_drawable_x(shape, dx)
-						if color is not None:
-							shape.paint=copy.copy(shape.paint)
-							shape.paint.color = color
+
 			return
 		
 		# ---------- HANDLE CHORDS ----------
 		if event_type != "chord":
 			return
+
+
+
+		note_shapes, accidental_shapes = shape_to_resize["shapes"]  
 		
-		note_shapes, accidental_shapes = shape_to_resize["shapes"]
-		
-		# Move NOTES - handle the extra nesting!
-		for note_group in note_shapes:
-			for note_block in note_group:
-				if isinstance(note_block, list):
-					note_type = note_block[-1]
-					drawable_shapes = note_block[:-1]
-					for shape in drawable_shapes:
-						self._shift_drawable_x(shape, dx)
-						if color is not None:
-							shape.paint=copy.copy(shape.paint)
+		if color is None:
+			# Fast path - just move shapes
+			for note_group in note_shapes:
+				for note_block in note_group:
+					if isinstance(note_block, list):
+						for shape in note_block[:-1]:  # Skip type string
+							self._shift_drawable_x(shape, dx)
+			
+			for acc_block in accidental_shapes:
+				for shape in acc_block[0]:  # Direct tuple access
+					self._shift_drawable_x(shape, dx)
+		else:
+			# Slow path - move and color
+			for note_group in note_shapes:
+				for note_block in note_group:
+					if isinstance(note_block, list):
+						for shape in note_block[:-1]:
+							self._shift_drawable_x(shape, dx)
+							shape.paint = copy.copy(shape.paint)
 							shape.paint.color = color
-		
-		# Move ACCIDENTALS
-		for acc_block in accidental_shapes:
-			shapes, acc_type = acc_block
-			for shape in shapes:
-				self._shift_drawable_x(shape, dx)
-				if color is not None:
-
-					shape.paint=copy.copy(shape.paint)
+			
+			for acc_block in accidental_shapes:
+				for shape in acc_block[0]:
+					self._shift_drawable_x(shape, dx)
+					shape.paint = copy.copy(shape.paint)
 					shape.paint.color = color
-
 	def compute_lookahead_seconds(
 		self,
 		screen_length_px,
@@ -817,7 +821,7 @@ class staff(Default_Widget):
 		
 		current_time = total_time - countdown_time
 		window_end = current_time + look_ahead_sec
-		temp_midi_dict = self.current_pressed_midi.copy()
+		#temp_midi_dict = self.current_pressed_midi.copy()
 		
 		if events is None:
 			events = self.current_event
@@ -841,7 +845,7 @@ class staff(Default_Widget):
 				i += 1
 				continue
 			
-			# ✅ OPTIMIZATION 1: Early break
+
 			if start >= window_end:
 				break
 			
@@ -852,20 +856,20 @@ class staff(Default_Widget):
 				temp_midi_dict = self.current_pressed_midi
 				
 				if "pitch_list" in event:
-					pitch_list = event["pitch_list"]  # ✅ Define pitch_list
+					pitch_list = event["pitch_list"]  
 					
-					if len(pitch_list) > 1:
-						# ✅ OPTIMIZATION 2: Set subset check
+					if len(pitch_list) > 1 and len(pitch_list)==len(temp_midi_dict):
+								
 						if set(pitch_list).issubset(temp_midi_dict):  #  Use temp_midi_dict
 							self.edit_shape(event, color=ft.Colors.GREEN)
-							# ✅ FIDelete ALL matched notes, not just first
+
 							for pitch in pitch_list:
 								del temp_midi_dict[pitch]
 							self.current_pressed_midi = temp_midi_dict
 						else:
 							self.edit_shape(event)
 					
-					# ✅ Restore single-note case
+
 					elif pitch_list[0] in temp_midi_dict:
 						self.edit_shape(event, color=ft.Colors.GREEN)
 						del temp_midi_dict[pitch_list[0]]
@@ -1049,7 +1053,7 @@ class staff(Default_Widget):
 		##this is how everything is mapped##
 		self.set_note_dic()
 
-	def handle_file_result(self, e: ft.FilePickerResultEvent, filesButton):
+	def handle_file_result(self, e: ft.FilePickerResultEvent, filesButton,media_container=None):
 		if e.files:
 
 			self.currentFile = e.files[0].path
@@ -1060,39 +1064,36 @@ class staff(Default_Widget):
 				filesButton.update()
 			
 			##parse music xml
-			events,self.total_score_time_sec = parse_musicxml_chords("/home/soup/Downloads/Fur_Elise/score.xml")
-			
+			events,self.total_score_time_sec = parse_musicxml_chords(self.currentFile)
+			self.paused_time_remaining=self.total_score_time_sec	
 
 			self.current_event=self.create_dumb_events(events)
-			
+			self.event_index = 0  
 			print(f"{len(self.current_event)} is dumb vs {len(events)} ")
-
-
-
 			self.score_timer= self.Timer(self.total_score_time_sec)
-			self.total_score_time_sec=self.total_score_time_sec
 
-			play_pause_button = ft.IconButton(
-				icon=ft.Icons.PLAY_ARROW,
-				tooltip="Play",
-				data={"playing": False},  # track state
-				on_click=lambda e: self.toggle_playback(e.control)
-			)
+			if media_container:
+				play_pause_button = ft.IconButton(
+					icon=ft.Icons.PLAY_ARROW,
+					tooltip="Play",
+					data={"playing": False},  # track state
+					on_click=lambda e: self.toggle_playback(e.control)
+				)
 
-			restart_button = ft.IconButton(
-				icon=ft.Icons.RESTART_ALT,
-				tooltip="Restart",
-				on_click=lambda _: self.restart_score()
-			)
+				restart_button = ft.IconButton(
+					icon=ft.Icons.RESTART_ALT,
+					tooltip="Restart",
+					on_click=lambda _: self.restart_score()
+				)
 
-			# Add them to the layout
-			controls_row = ft.Row(
-				controls=[play_pause_button, restart_button],
-				spacing=5
-			)
+				# Add them to the layout
+				controls_row = ft.Row(
+					controls=[play_pause_button, restart_button],
+					spacing=5
+				)
 
-			self.Wbody.content.controls[0].controls.append(controls_row)
-			self.Wbody.content.controls[0].update()
+				media_container.content=(controls_row)
+				media_container.update()
 		else:
 			if filesButton:
 
@@ -1100,10 +1101,21 @@ class staff(Default_Widget):
 				filesButton.update()
 			self.currentFile= None
 
+	def _toggle_step_playing(self, e):
+		self.step_playing = not self.step_playing
+		if self.step_playing:
+			self.step_toggle_real.bgcolor = ft.Colors.GREY_600
+			self.step_toggle_step.bgcolor = ft.Colors.GREEN
+		else:
+			self.step_toggle_real.bgcolor = ft.Colors.GREEN
+			self.step_toggle_step.bgcolor = ft.Colors.GREY_600
+		self.step_toggle_btn.update()
 
+	def _on_pps_change(self, e):
+		self.pixels_per_second = float(e.control.value)
+		self.look_ahead_sec = self.compute_lookahead_seconds(self.canvas.width, self.pixels_per_second)
 
-
-	def __init__(self, width_scale=1, height_scale=1,stroke_scale=1,show_bass=True,show_line=True):
+	def __init__(self, width_scale=1, height_scale=1,stroke_scale=1,show_bass=True,show_line=True,step_playing=False):
 		super().__init__()
 
 		self.currentFile=None
@@ -1116,13 +1128,14 @@ class staff(Default_Widget):
 		self.event_index=0
 		self.current_event=None
 		self.total_score_time_sec=0
-		self.pixels_per_second=120
 		
 
+
+		self.step_playing=step_playing
+		BASE_WIDTH = 1600
+		self.pixels_per_second = 120 * (self.page_size["x"] / BASE_WIDTH)
 		self.press_window_sec=0.2
 		self.current_pressed_midi={}
-		
-		
 		self.paused_time_remaining = None
 		self.user_note_shapes=[]
 
@@ -1289,7 +1302,7 @@ class staff(Default_Widget):
 									[
 
 									ft.Column(
-										controls=[self.t_row],
+										controls=[self.t_row,ft.Container()],
 										#horizontal_alignment=ft.CrossAxisAlignment.START
 										alignment=ft.MainAxisAlignment.CENTER
 										),
@@ -1337,8 +1350,10 @@ class staff(Default_Widget):
 			on_click=lambda _: pick_files_dialog.pick_files(allow_multiple=False, allowed_extensions=["mxl","xml"]),
 		)
 
+		#           row-column.32
+		
 		pick_files_dialog = ft.FilePicker(
-			on_result=lambda e: self.handle_file_result(e, filesButton)
+			on_result=lambda e: self.handle_file_result(e, filesButton,media_container=self.Wbody.content.controls[0].controls[1])
 		)
 
 		fileSelectRow=ft.Row(
@@ -1351,8 +1366,83 @@ class staff(Default_Widget):
 				]
 		)
 
-		self.sidebar_content.controls.append(range_row)
-		self.sidebar_content.controls.append(fileSelectRow)
+				# --- Real Time settings ---
+		self.pps_slider = ft.Slider(
+			min=30,
+			max=400,
+			value=self.pixels_per_second,
+			divisions=37,
+			label="{value} px/s",
+			on_change=self._on_pps_change,
+		)
+
+
+			# In __init__, after fileSelectRow:
+
+		self.step_toggle_real = ft.Container(
+			content=ft.Text("Real Time", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+			bgcolor=ft.Colors.GREEN if not self.step_playing else ft.Colors.GREY_600,
+			padding=ft.padding.symmetric(horizontal=10, vertical=6),
+			border_radius=ft.border_radius.only(top_left=8, bottom_left=8),
+		)
+
+		self.step_toggle_step = ft.Container(
+			content=ft.Text("Step by Step", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+			bgcolor=ft.Colors.GREY_600 if not self.step_playing else ft.Colors.GREEN,
+			padding=ft.padding.symmetric(horizontal=10, vertical=6),
+			border_radius=ft.border_radius.only(top_right=8, bottom_right=8),
+		)
+
+		self.step_toggle_btn = ft.ElevatedButton(
+			content=ft.Row(
+				controls=[self.step_toggle_real, self.step_toggle_step],
+				spacing=0,
+				tight=True,
+			),
+			on_click=self._toggle_step_playing,
+			style=ft.ButtonStyle(
+				padding=ft.padding.all(0),
+				shape=ft.RoundedRectangleBorder(radius=8),
+				overlay_color=ft.Colors.TRANSPARENT,
+				bgcolor=ft.Colors.TRANSPARENT,
+				shadow_color=ft.Colors.TRANSPARENT,
+				elevation=0,
+			),
+		)
+
+		# --- Real Time settings ---
+		self.realtime_settings = ft.Column(
+			controls=[
+				ft.Text("Real Time Settings", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+				ft.Text("(your real time options here)", size=10, color=ft.Colors.WHITE54),
+			],
+			horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+			spacing=4,
+		)
+
+		# --- Step by Step settings ---
+		self.step_settings = ft.Column(
+			controls=[
+				ft.Text("Step Settings", size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE70),
+				ft.Text("(your step options here)", size=10, color=ft.Colors.WHITE54),
+			],
+			horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+			spacing=4,
+		)
+
+		self.play_settings_container = ft.Container(
+			content=self.step_settings if self.step_playing else self.realtime_settings,
+			padding=ft.padding.symmetric(vertical=6),
+		)
+		
+
+		
+		
+		
+	
+		self.sidebar_content.controls.append(self.pps_slider)
+		self.sidebar_content.controls.append(self.step_toggle_btn)
+		self.sidebar_content.controls.append(self.play_settings_container)
 		#lambda makes me do this after i think
 		self.from_field.on_change = lambda e: self.change_octave_field(self.to_field,self.from_field,self,"up")
 		self.to_field.on_change = lambda e: self.change_octave_field(self.from_field,self.to_field,self,"down")
@@ -1930,25 +2020,20 @@ class staff(Default_Widget):
 		canvas_update = False
 		t_update = False
 		events_to_spawn = []
-
-
 		
 		if self.score_timer and self.score_timer.running():
 			self.score_timer.tick()
-
+			
+			remaining = self.score_timer.remaining()
+			
+			self.current_pressed_midi = {
+				pitch: timestamp 
+				for pitch, timestamp in self.current_pressed_midi.items()
+				if timestamp <= remaining + 0.1
+			}
 			
 
-			temp_pressed=self.current_pressed_midi.copy()
-
-			for i in temp_pressed:
-				if temp_pressed[i] > self.score_timer.remaining()+0.25:
-					del self.current_pressed_midi[i]
-
-			self.current_pressed_midi=temp_pressed
-
-			
-
-			print(self.score_timer.remaining())
+			print(remaining)
 			events_to_spawn = self.get_events_lookahead_and_place(
 				total_time=self.total_score_time_sec,
 				countdown_time=self.score_timer.remaining(),
@@ -2014,6 +2099,9 @@ class staff(Default_Widget):
 		self.top_margin=self.height*0.18
 
 		self.canvas.width=self.width
+		BASE_WIDTH = 1600  # your reference/design resolution width
+		self.pixels_per_second = 120 * (self.canvas.width / BASE_WIDTH)
+		self.look_ahead_sec = self.compute_lookahead_seconds(self.canvas.width, self.pixels_per_second)
 		self.look_ahead_sec=self.compute_lookahead_seconds(self.canvas.width,self.pixels_per_second)
 		self.canvas.height=self.height+self.top_margin
 		self.line_spacing = (self.height/self.num_lines)-(self.height*0.013)
@@ -2078,13 +2166,45 @@ class staff(Default_Widget):
 			self.canvas.shapes.insert(0,i)  #<---- can be optimised to be added on creation instead of looping twice over staff lines
 		self.canvas.shapes.append(self.noteline)
 
+
+
+				##FOR XML NOTES
+		if self.score_timer:
+			current_time = None
+			if self.score_timer.running():
+				current_time = self.score_timer.remaining()
+				self.score_timer.stop()
+
+				try:
+					play_button = self.Wbody.content.controls[0].controls[1].content.controls[0]
+					play_button.icon = ft.Icons.PLAY_ARROW
+					play_button.tooltip = "Play"
+					play_button.data["playing"] = False
+					play_button.update()
+				except (IndexError, AttributeError, TypeError):
+					pass  # button might not exist yet
+			elif self.paused_time_remaining is not None:
+				current_time = self.paused_time_remaining  # ← was paused, grab saved position
+
+			makeshift_result = type("Dummy", (), {})()
+			file_obj = type("Dummy", (), {})()
+			file_obj.path = self.currentFile
+			makeshift_result.files = [file_obj]
+
+			self.handle_file_result(makeshift_result, None)
+
+			if current_time is not None:
+				self.score_timer.duration = current_time
+				self.paused_time_remaining = current_time
+
+			self.score_timer.start()
+
 		await self.update_func(self.pl)
 		await self.tick(updated=True)
+
+		if self.score_timer:
+			self.score_timer.stop()
 		self.Wbody.update()
-
-
-		#await trigger_event("total_update")
-
 
 class Sidebar(ft.Container):
 

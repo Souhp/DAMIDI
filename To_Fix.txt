@@ -11,9 +11,17 @@ maek a new functon for adding accidentlsso that it can be done after on the dict
 --to fix--
 
 
--SO THAT I CAN ADD FILE INPUT FOR XML
+Staff:
+	Bugs:
+		-Resizing while playing song should: pause song if it is playing, recreate shapes and set it to that specific time, rerender,
+		-fix bug where file does not work again if add a new file after a file is or has already been played
 
--parse xml with the new module MuseParse
+	features to implement:
+		-I want to have an option where if, I check a box, the staff is step by step instead of real time,
+			-can change note to red if not is wrong and continue OR can stay untill correct
 
--display on screen realtime
+
+
+	
+		
 
