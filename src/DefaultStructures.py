@@ -12,7 +12,7 @@ from collections import namedtuple
 default_scale={"C":  ["C", "D", "E", "F", "G", "A", "B"]}
 import math
 import copy
-from mxmlParser import parse_musicxml_chords
+from parser import parse_musicxml_chords
 import time
 from staff_shapes import shape_constructor
 
@@ -990,27 +990,6 @@ class staff(Default_Widget):
 							note_shapes_list.append(note_shapes)
 						else:
 							print(f"SKIPPED: {lookup_key} not in note_dic")
-						
-					##complete unfinished bars
-					if pending_bar_index is not None:  # Also improved this check
-						note1 = last_playable_shape
-						note2 = i
-						
-						bar_shapes = shape_constructor(
-							shape_x=0,
-							canvas_height=self.canvas.height,
-							top_margin=self.top_margin,
-							paint=self.stroke_paint,
-							type="bar"
-						)
-						dumb_events[pending_bar_index] = {  # Changed from events to dumb_events
-							"type": "bar",  # Added type
-							"shapes": bar_shapes,
-							"start_sec": ((note1["start_sec"]) + note2["start_sec"]) / 2
-						}
-						pending_bar_index = None
-				
-
 
 
 
@@ -1065,6 +1044,7 @@ class staff(Default_Widget):
 			
 			##parse music xml
 			events,self.total_score_time_sec = parse_musicxml_chords(self.currentFile)
+			self.total_score_time_sec
 			self.paused_time_remaining=self.total_score_time_sec	
 
 			self.current_event=self.create_dumb_events(events)
@@ -1106,38 +1086,45 @@ class staff(Default_Widget):
 		if self.step_playing:
 			self.step_toggle_real.bgcolor = ft.Colors.GREY_600
 			self.step_toggle_step.bgcolor = ft.Colors.GREEN
+			self.play_settings_container.content = self.step_settings
 		else:
 			self.step_toggle_real.bgcolor = ft.Colors.GREEN
 			self.step_toggle_step.bgcolor = ft.Colors.GREY_600
-		self.step_toggle_btn.update()
+			self.play_settings_container.content = self.realtime_settings
+		self.sidebar_content.update()
 
 	def _on_pps_change(self, e):
-		self.pixels_per_second = float(e.control.value)
+		self.pixels_per_second = e.control.value
 		self.look_ahead_sec = self.compute_lookahead_seconds(self.canvas.width, self.pixels_per_second)
+		self.shouldTickUpdate=True
+		print("moved")
 
 	def __init__(self, width_scale=1, height_scale=1,stroke_scale=1,show_bass=True,show_line=True,step_playing=False):
 		super().__init__()
 
-		self.currentFile=None
 		self.canvas = cv.Canvas()
 		self.show_bass=show_bass
 		self.note_dic={}
 		self.pl=[]
 		self.stroke_scale=stroke_scale
-		self.score_timer=None	
 		self.event_index=0
+		self.user_note_shapes=[]
+
+		#for mxml
+		self.currentFile=None
 		self.current_event=None
 		self.total_score_time_sec=0
-		
-
-
+		self.score_timer=None	
 		self.step_playing=step_playing
 		BASE_WIDTH = 1600
 		self.pixels_per_second = 120 * (self.page_size["x"] / BASE_WIDTH)
 		self.press_window_sec=0.2
 		self.current_pressed_midi={}
 		self.paused_time_remaining = None
-		self.user_note_shapes=[]
+		
+		#this is because some items have call backs that arent made in a synchronus event or other shit
+		#Only really used for visual purposes, once a change is made it should tick once and never again
+		self.shouldTickUpdate=False
 
 
 
@@ -1439,7 +1426,8 @@ class staff(Default_Widget):
 		
 		
 		
-	
+			
+		self.sidebar_content.controls.append(fileSelectRow)
 		self.sidebar_content.controls.append(self.pps_slider)
 		self.sidebar_content.controls.append(self.step_toggle_btn)
 		self.sidebar_content.controls.append(self.play_settings_container)
@@ -2021,9 +2009,9 @@ class staff(Default_Widget):
 		t_update = False
 		events_to_spawn = []
 		
+
 		if self.score_timer and self.score_timer.running():
 			self.score_timer.tick()
-			
 			remaining = self.score_timer.remaining()
 			
 			self.current_pressed_midi = {
@@ -2042,6 +2030,26 @@ class staff(Default_Widget):
 			#print(len(events_to_spawn))
 			t_update = True
 			canvas_update = True
+
+		elif self.shouldTickUpdate:
+			print("faketick")
+			self.shouldTickUpdate=False
+
+			remaining = self.score_timer.remaining()
+						
+			events_to_spawn = self.get_events_lookahead_and_place(
+				total_time=self.total_score_time_sec,
+				countdown_time=self.score_timer.remaining(),
+				look_ahead_sec=self.look_ahead_sec,
+			)
+			#print(len(events_to_spawn))
+			t_update = True
+			canvas_update = True
+
+			
+
+
+
 		
 		if updated:
 			t_update = True
