@@ -1,3 +1,4 @@
+
 import flet as ft
 from Event_Dispatch_Bus import trigger_event, register_event
 import PageMemory
@@ -891,35 +892,25 @@ class staff(Default_Widget):
 			dumb_events = []
 			global_note_counter = 0
 			
-			last_playable_shape = None  # Changed from None to 0
-			pending_bar_index = None
+
+
 			for index,i in enumerate(events):
 				event_type = i.get("type")
 				
 				if event_type == "bar":
 					bar_shapes = shape_constructor(
-						shape_x=0,
+						shape_x=self.og_position,
 						canvas_height=self.canvas.height,
 						top_margin=self.top_margin,
 						paint=self.stroke_paint,
 						type="bar"
 					)
-					if last_playable_shape == None:
-						dumb_events.append({
-							"type": event_type,
-							"shapes": bar_shapes,
-							"start_sec": i.get('start_sec'),
-						})
-						print("unfinished")
-					else:
-						pending_bar_index = index
-						dumb_events.append({
-							"type": event_type,
-							"shapes": bar_shapes,
-							"start_sec": i.get('start_sec'),
-						})
-					# Bar logic removed - implement your own here
-					pass
+					dumb_events.append({
+						"type": event_type,
+						"shapes": bar_shapes,
+						"start_sec": i.get('start_sec'),
+					})
+
 				
 				elif event_type == "chord":
 					pl = []
@@ -990,11 +981,7 @@ class staff(Default_Widget):
 							note_shapes_list.append(note_shapes)
 						else:
 							print(f"SKIPPED: {lookup_key} not in note_dic")
-
-
-
-
-
+						
 
 					dumb_events.append({
 						"type": event_type,
@@ -2305,5 +2292,4 @@ class Sidebar(ft.Container):
 	def top_nav_change(self, e):
 		self.top_nav_rail.selected_index = e.control.selected_index
 		self.update()
-
 
