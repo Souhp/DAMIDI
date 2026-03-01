@@ -1,0 +1,27 @@
+so my issue is the the accidentals are added after but that does not matter because it is added in make note.
+
+maek a new functon for adding accidentlsso that it can be done after on the dictionary containing the accidentlsin text ie: [N,#]
+ done
+
+ mustfind a fix for get last index  DONE
+
+
+
+ 08 01
+--to fix--
+
+
+Staff:
+	Bugs:
+		-Resizing while playing song should: pause song if it is playing, recreate shapes and set it to that specific time, rerender,
+		-fix bug where file does not work again if add a new file after a file is or has already been played
+
+	features to implement:
+		-I want to have an option where if, I check a box, the staff is step by step instead of real time,
+			-can change note to red if not is wrong and continue OR can stay untill correct
+
+
+
+	
+		
+
