@@ -1,0 +1,58 @@
+{
+    "#nav_btn": {
+        "colours": {
+            "normal_bg":      "#2e2e6e",
+            "hovered_bg":     "#4a4aaa",
+            "active_bg":      "#23235a",
+            "normal_text":    "#d7d7ff",
+            "hovered_text":   "#ffffff",
+            "active_text":    "#ffffff",
+            "normal_border":  "#4a4aaa",
+            "hovered_border": "#7070cc"
+        },
+		"font": {
+			"name":"IosevkaCharonMono-Regular",
+			"path": "src/fonts/IosevkaCharonMono-Regular.ttf",
+			"size": "15"
+		},
+        "misc": {
+            "border_width":  "1",
+            "border_radius": "6",
+            "padding":       "2,4"
+        }
+    },
+
+    "#nav_title": {
+        "colours": {
+            "normal_text": "#d7d7ff",
+            "dark_bg":     "#12122a"
+        },
+		"font": {
+			"name":"IosevkaCharonMono-Regular",
+			"path": "src/fonts/IosevkaCharonMono-Regular.ttf",
+			"size": "18"
+		}
+    },
+
+    "#page_btn": {
+        "colours": {
+            "normal_bg":      "#2e2e6e",
+            "hovered_bg":     "#4a4aaa",
+            "active_bg":      "#23235a",
+            "normal_text":    "#d7d7ff",
+            "hovered_text":   "#ffffff",
+            "active_text":    "#ffffff",
+            "normal_border":  "#4a4aaa",
+            "hovered_border": "#8888dd"
+        },
+		"font": {
+			"name":"IosevkaCharonMono-Regular",
+			"path": "src/fonts/IosevkaCharonMono-Regular.ttf",
+			"size": "18"
+		},
+        "misc": {
+            "border_width":  "1",
+            "border_radius": "10"
+        }
+    }
+}
