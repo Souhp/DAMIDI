@@ -14,3 +14,5 @@ NAV_DIVIDER = (38, 38, 78)
 SIDEBAR_W_FRAC = 0.28
 GRID_PAD_FRAC  = 0.018
 GRID_GAP_FRAC  = 0.012
+
+default_scale={"C":  ["C", "D", "E", "F", "G", "A", "B"]}
