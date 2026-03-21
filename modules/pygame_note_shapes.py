@@ -14,8 +14,8 @@ Key differences from the Cairo version
 • Bezier / ellipse curves are pre-sampled into point lists at construction
   time so draw() is a single polygon / lines call with zero math overhead.
 • No ctx.save()/restore(), no transform matrices, no Cairo path state.
-• Hollow noteheads are drawn as a filled polygon (outer) minus a smaller
-  inner polygon — cheaper than Cairo stroke-only paths.
+• Hollow noteheads are drawn as outer filled polygon + smaller inner white
+  polygon — always crisp, no thick-polyline aliasing artefacts.
 """
 
 from __future__ import annotations
@@ -46,22 +46,10 @@ _WHITE: RGBA = (255, 255, 255, 255)
 
 
 def parse_color(color) -> RGBA:
-    """
-    Convert any color value to a pygame-compatible (r, g, b, a) int tuple.
-
-    Accepts:
-      - (r, g, b, a) tuple — ints 0-255 returned as-is
-      - (r, g, b, a) tuple — floats 0-1 auto-detected and scaled
-      - CSS name string: "black", "green", …
-      - "#RRGGBB" / "RRGGBB"
-      - "#AARRGGBB" / "AARRGGBB"  (Flet ARGB byte order)
-      - Any object with a .color attribute (Flet Paint)
-    """
     if hasattr(color, "color"):
         return parse_color(color.color)
 
     if isinstance(color, (tuple, list)) and len(color) == 4:
-        # Auto-detect float vs int
         if all(isinstance(v, float) and v <= 1.0 for v in color):
             return tuple(int(v * 255) for v in color)
         return tuple(int(v) for v in color)
@@ -77,7 +65,7 @@ def parse_color(color) -> RGBA:
     try:
         if len(h) == 6:
             return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255)
-        if len(h) == 8:          # Flet ARGB byte order: AARRGGBB
+        if len(h) == 8:
             return (int(h[2:4], 16), int(h[4:6], 16),
                     int(h[6:8], 16), int(h[0:2], 16))
     except ValueError:
@@ -89,11 +77,10 @@ def parse_color(color) -> RGBA:
 # Bezier / curve sampling utilities
 # ─────────────────────────────────────────────────────────────────────────────
 
-_CURVE_STEPS = 16    # segments per bezier arc — enough for smooth curves
+_CURVE_STEPS = 16
 
 
 def _sample_cubic(p0, cp1, cp2, p1, steps: int = _CURVE_STEPS):
-    """Sample a cubic bezier into a list of (x, y) points."""
     pts = []
     for i in range(steps + 1):
         t  = i / steps
@@ -112,12 +99,6 @@ def _sample_cubic(p0, cp1, cp2, p1, steps: int = _CURVE_STEPS):
 
 def _sample_rational_quadratic(p0, cp, p1, w: float,
                                 steps: int = _CURVE_STEPS):
-    """
-    Sample a rational quadratic bezier (used for exact ellipse arcs).
-
-        B(t) = (p0*(1-t)^2 + w*cp*2t(1-t) + p1*t^2)
-               / ((1-t)^2 + w*2t(1-t) + t^2)
-    """
     pts = []
     for i in range(steps + 1):
         t   = i / steps
@@ -133,7 +114,6 @@ def _sample_rational_quadratic(p0, cp, p1, w: float,
 
 
 def _quad_to_cubic(p0, cp, p1):
-    """Convert a standard (non-rational) quadratic bezier to cubic control points."""
     c1 = (p0[0] + (2/3) * (cp[0] - p0[0]),
           p0[1] + (2/3) * (cp[1] - p0[1]))
     c2 = (p1[0] + (2/3) * (cp[0] - p1[0]),
@@ -146,14 +126,6 @@ def _quad_to_cubic(p0, cp, p1):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PygameShape:
-    """
-    Base class for every pygame-native shape.
-
-    draw(surface)   — render onto a pygame.Surface
-    shift_x(dx)     — translate horizontally in-place
-    set_color(c)    — update color
-    """
-
     color: RGBA = _BLACK
 
     def draw(self, surface: pygame.Surface) -> None:
@@ -170,137 +142,42 @@ class PygameShape:
 # PygameLine
 # ─────────────────────────────────────────────────────────────────────────────
 
-class PygameLine(PygameShape):
-    """
-    Antialiased line.  For width > 1 falls back to pygame.draw.line
-    (pygame.draw.aaline only supports width=1).
-    """
-
-    __slots__ = ("x1", "y1", "x2", "y2", "color", "stroke_width")
-
-    def __init__(self, x1, y1, x2, y2, color=None, stroke_width: float = 1.0):
-        self.x1, self.y1 = x1, y1
-        self.x2, self.y2 = x2, y2
-        self.color        = parse_color(color) if color is not None else _BLACK
-        self.stroke_width = stroke_width
-
-    def shift_x(self, dx: float):
-        self.x1 += dx
-        self.x2 += dx
-
-    def draw(self, surface: pygame.Surface):
-        w = max(1, round(self.stroke_width))
-        p1 = (round(self.x1), round(self.y1))
-        p2 = (round(self.x2), round(self.y2))
-        if w == 1:
-            pygame.draw.aaline(surface, self.color, p1, p2)
-        else:
-            pygame.draw.line(surface, self.color, p1, p2, w)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PygameCircle
-# ─────────────────────────────────────────────────────────────────────────────
-
-class PygameCircle(PygameShape):
-    """Filled or stroked circle."""
-
-    __slots__ = ("x", "y", "radius", "color", "stroke_width", "_fill")
-
-    def __init__(self, x, y, radius, color=None, stroke_width: float = 1.0,
-                 fill: bool = True):
-        self.x, self.y    = x, y
-        self.radius       = radius
-        self.color        = parse_color(color) if color is not None else _BLACK
-        self.stroke_width = stroke_width
-        self._fill        = fill
-
-    def shift_x(self, dx: float):
-        self.x += dx
-
-    def draw(self, surface: pygame.Surface):
-        w = 0 if self._fill else max(1, round(self.stroke_width))
-        pygame.draw.circle(surface, self.color,
-                           (round(self.x), round(self.y)),
-                           max(1, round(self.radius)), w)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PygameEllipse  (axis-aligned)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class PygameEllipse(PygameShape):
-    """Axis-aligned filled ellipse.  x, y are the top-left corner."""
-
-    __slots__ = ("x", "y", "width", "height", "color")
-
-    def __init__(self, x, y, width, height, color=None):
-        self.x, self.y          = x, y
-        self.width, self.height = width, height
-        self.color              = parse_color(color) if color is not None else _BLACK
-
-    def shift_x(self, dx: float):
-        self.x += dx
-
-    def draw(self, surface: pygame.Surface):
-        rect = pygame.Rect(round(self.x), round(self.y),
-                           max(1, round(self.width)), max(1, round(self.height)))
-        pygame.draw.ellipse(surface, self.color, rect)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PygamePolygon  —  pre-sampled curve or arbitrary filled polygon
-# ─────────────────────────────────────────────────────────────────────────────
-
 class PygamePolygon(PygameShape):
-    """
-    Filled polygon from a pre-sampled list of (x, y) points.
+    __slots__ = ("_pts", "color", "_dx")
 
-    shift_x() translates every point in-place — O(n) but called rarely.
-    draw() is a single pygame.draw.polygon call — O(n) GPU-side only.
-    """
-
-    __slots__ = ("_pts", "color")
-
-    def __init__(self, points: list[tuple[float, float]], color=None):
+    def __init__(self, points, color=None):
         self._pts  = list(points)
+        self._dx   = 0.0                          # ← offset, never reallocates
         self.color = parse_color(color) if color is not None else _BLACK
 
     def shift_x(self, dx: float):
-        self._pts = [(x + dx, y) for x, y in self._pts]
+        self._dx += dx                            # ← O(1), no allocation
 
-    def draw(self, surface: pygame.Surface):
+    def draw(self, surface):
         if len(self._pts) < 3:
             return
-        ipts = [(round(x), round(y)) for x, y in self._pts]
+        dx = self._dx
+        ipts = [(round(x + dx), round(y)) for x, y in self._pts]
         pygame.draw.polygon(surface, self.color, ipts)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PygamePolyline  —  pre-sampled open curve (stroke only)
-# ─────────────────────────────────────────────────────────────────────────────
-
 class PygamePolyline(PygameShape):
-    """
-    Antialiased open polyline from a pre-sampled list of (x, y) points.
-    Used for flags and other stroked bezier curves.
-    """
+    __slots__ = ("_pts", "color", "stroke_width", "_dx")
 
-    __slots__ = ("_pts", "color", "stroke_width")
-
-    def __init__(self, points: list[tuple[float, float]], color=None,
-                 stroke_width: float = 1.0):
+    def __init__(self, points, color=None, stroke_width=1.0):
         self._pts         = list(points)
+        self._dx          = 0.0
         self.color        = parse_color(color) if color is not None else _BLACK
         self.stroke_width = stroke_width
 
     def shift_x(self, dx: float):
-        self._pts = [(x + dx, y) for x, y in self._pts]
+        self._dx += dx
 
-    def draw(self, surface: pygame.Surface):
+    def draw(self, surface):
         if len(self._pts) < 2:
             return
-        ipts = [(round(x), round(y)) for x, y in self._pts]
+        dx = self._dx
+        ipts = [(round(x + dx), round(y)) for x, y in self._pts]
         w = max(1, round(self.stroke_width))
         if w == 1:
             pygame.draw.aalines(surface, self.color, False, ipts)
@@ -308,6 +185,67 @@ class PygamePolyline(PygameShape):
             pygame.draw.lines(surface, self.color, False, ipts, w)
 
 
+class PygameLine(PygameShape):
+    __slots__ = ("x1", "y1", "x2", "y2", "color", "stroke_width", "_dx")
+
+    def __init__(self, x1, y1, x2, y2, color=None, stroke_width=1.0):
+        self.x1, self.y1  = x1, y1
+        self.x2, self.y2  = x2, y2
+        self._dx          = 0.0
+        self.color        = parse_color(color) if color is not None else _BLACK
+        self.stroke_width = stroke_width
+
+    def shift_x(self, dx: float):
+        self._dx += dx
+
+    def draw(self, surface):
+        w  = max(1, round(self.stroke_width))
+        dx = self._dx
+        p1 = (round(self.x1 + dx), round(self.y1))
+        p2 = (round(self.x2 + dx), round(self.y2))
+        if w == 1:
+            pygame.draw.aaline(surface, self.color, p1, p2)
+        else:
+            pygame.draw.line(surface, self.color, p1, p2, w)
+
+
+class PygameCircle(PygameShape):
+    __slots__ = ("x", "y", "radius", "color", "stroke_width", "_fill", "_dx")
+
+    def __init__(self, x, y, radius, color=None, stroke_width=1.0, fill=True):
+        self.x, self.y    = x, y
+        self._dx          = 0.0
+        self.radius       = radius
+        self.color        = parse_color(color) if color is not None else _BLACK
+        self.stroke_width = stroke_width
+        self._fill        = fill
+
+    def shift_x(self, dx: float):
+        self._dx += dx
+
+    def draw(self, surface):
+        w = 0 if self._fill else max(1, round(self.stroke_width))
+        pygame.draw.circle(surface, self.color,
+                           (round(self.x + self._dx), round(self.y)),
+                           max(1, round(self.radius)), w)
+
+
+class PygameEllipse(PygameShape):
+    __slots__ = ("x", "y", "width", "height", "color", "_dx")
+
+    def __init__(self, x, y, width, height, color=None):
+        self.x, self.y          = x, y
+        self._dx                = 0.0
+        self.width, self.height = width, height
+        self.color              = parse_color(color) if color is not None else _BLACK
+
+    def shift_x(self, dx: float):
+        self._dx += dx
+
+    def draw(self, surface):
+        rect = pygame.Rect(round(self.x + self._dx), round(self.y),
+                           max(1, round(self.width)), max(1, round(self.height)))
+        pygame.draw.ellipse(surface, self.color, rect)
 # ─────────────────────────────────────────────────────────────────────────────
 # PygameNotehead  —  rotated ellipse via pre-sampled rational quadratic arcs
 # ─────────────────────────────────────────────────────────────────────────────
@@ -318,32 +256,39 @@ _W = math.cos(math.pi / 4)   # ≈ 0.7071 — exact ellipse arc weight
 class PygameNotehead:
     """
     Rotated ellipse notehead built from four rational quadratic bezier arcs,
-    pre-sampled at construction time into a single polygon point list.
+    pre-sampled at construction time into polygon point lists.
 
-    Geometry is identical to CairoNotehead / staff_shapes.Notehead.
+    Hollow rendering
+    ────────────────
+    Hollow noteheads use two filled PygamePolygons (outer black + inner white
+    scaled toward the centre) instead of a thick PygamePolyline.
+    pygame.draw.lines / aalines with width > 1 produces spotty, uneven strokes;
+    the double-polygon approach is always crisp regardless of size.
 
-    Attributes after construction
-    ─────────────────────────────
-    .shape              PygamePolygon  (or PygamePolyline for hollow)
-    .stem_up_attach     (x, y)
-    .stem_down_attach   (x, y)
-    .shapes             [self.shape]  (convenience list)
+    .shapes  — list of PygameShape objects to draw (1 for filled, 2 for hollow)
+    .shape   — the primary (outer) shape, kept for back-compat
     """
+
+    # How much to shrink the outer polygon to produce the hollow "hole".
+    # 0.45 gives a ring width of roughly 28 % of the semi-axis — visually
+    # matches engraving conventions at typical staff sizes.
+    _HOLLOW_INNER_SCALE = 0.45
 
     def __init__(self, cx, cy,
                  width: float = 20.0, height: float = 13.0,
                  theta: float = -math.pi / 6,
                  color=None, hollow: bool = False):
-        self._cx, self._cy     = cx, cy
-        self._a, self._b       = width / 2, height / 2
-        self._theta            = theta
-        self._color            = parse_color(color) if color is not None else _BLACK
-        self._hollow           = hollow
-        self._width            = width
+        self._cx, self._cy = cx, cy
+        self._a, self._b   = width / 2, height / 2
+        self._theta        = theta
+        self._color        = parse_color(color) if color is not None else _BLACK
+        self._hollow       = hollow
+        self._width        = width
 
         self._compute_geometry()
-        self.shape = self._build_shape()
+        self._shapes = self._build_shapes()
 
+    # ------------------------------------------------------------------
     def _compute_geometry(self):
         a, b   = self._a, self._b
         cx, cy = self._cx, self._cy
@@ -359,7 +304,8 @@ class PygameNotehead:
         self.CP23 = (cx - a*c + b*s, cy - a*s - b*c )
         self.CP30 = (cx + a*c + b*s, cy + a*s - b*c )
 
-    def _build_shape(self):
+    def _sample_outline(self) -> list[tuple[float, float]]:
+        """Return the pre-sampled ellipse outline points."""
         pts = []
         arcs = [
             (self.P0,  self.CP01, self.P1),
@@ -368,23 +314,42 @@ class PygameNotehead:
             (self.P3,  self.CP30, self.P0),
         ]
         for p0, cp, p1 in arcs:
-            # All but the last point of each arc (avoid duplicate join points)
             pts.extend(_sample_rational_quadratic(p0, cp, p1, _W)[:-1])
+        return pts
 
-        if self._hollow:
-            # Hollow: draw as thick polyline — stroke width proportional to size
-            sw = self._width * 0.30
-            closed_pts = pts + [pts[0]]
-            return PygamePolyline(closed_pts, self._color, sw)
-        else:
-            return PygamePolygon(pts, self._color)
+    def _build_shapes(self) -> list[PygameShape]:
+        pts = self._sample_outline()
+        outer = PygamePolygon(pts, self._color)
+
+        if not self._hollow:
+            return [outer]
+
+        # ── Hollow: add a smaller white polygon to punch the hole ──────────
+        # Scale all outline points toward the centre by _HOLLOW_INNER_SCALE.
+        # This keeps the rotated orientation perfectly matched to the outer
+        # ring without any trig — and both polygons are always filled, so
+        # pygame.draw.polygon stays crisp at every size.
+        cx, cy = self._cx, self._cy
+        k = self._HOLLOW_INNER_SCALE
+        inner_pts = [(cx + (x - cx) * k, cy + (y - cy) * k) for x, y in pts]
+        inner = PygamePolygon(inner_pts, _WHITE)
+        return [outer, inner]
+
+    # ------------------------------------------------------------------
+    @property
+    def shape(self) -> PygameShape:
+        """Primary (outer) shape — kept for back-compat."""
+        return self._shapes[0]
+
+    @property
+    def shapes(self) -> list[PygameShape]:
+        """All shapes needed to render this notehead (outer + optional inner)."""
+        return list(self._shapes)
 
     @property
     def stem_up_attach(self)   -> tuple: return self.P0
     @property
     def stem_down_attach(self) -> tuple: return self.P2
-    @property
-    def shapes(self)           -> list:  return [self.shape]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -398,7 +363,6 @@ def _stem(x1, y1, x2, y2, shape_width: float, color) -> PygameLine:
 
 def _flag(stem_x, stem_y, shape_width, shape_height, color,
           length_scale: float = 1.0) -> PygamePolyline:
-    """Swoopy cubic bezier flag."""
     cp1 = (stem_x + shape_width  * 0.5,
            stem_y + shape_height * 0.3 * length_scale)
     cp2 = (stem_x + shape_width  * 0.5,
@@ -413,7 +377,6 @@ def _straight_flag(x1, y1, x2, y2, shape_width, color) -> PygameLine:
 
 
 def _accidental_sw(paint, shape_width: float) -> float:
-    """Return a stroke width — from paint if available, else scaled from shape_width."""
     if paint is not None:
         sw = getattr(paint, 'stroke_width', None)
         if sw:
@@ -422,7 +385,7 @@ def _accidental_sw(paint, shape_width: float) -> float:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# pygame_shape_constructor  —  drop-in replacement for cairo_shape_constructor
+# pygame_shape_constructor
 # ─────────────────────────────────────────────────────────────────────────────
 
 def pygame_shape_constructor(
@@ -439,18 +402,6 @@ def pygame_shape_constructor(
     right_margin  = None,
     dotted: bool  = False,
 ) -> list | None:
-    """
-    Drop-in replacement for cairo_shape_constructor / staff_shapes.shape_constructor.
-
-    Returns  [ ([PygameShape, …], type_string), … ]  or  None on bad args.
-
-    Removed from the Cairo version
-    ───────────────────────────────
-    • cairo.Context, ctx.save/restore, CTM transforms — not needed
-    • CairoPath element classes (_MoveTo, _CubicTo, …) — replaced by
-      pre-sampled point lists baked into PygamePolygon / PygamePolyline
-    • Float color arithmetic — colors are int tuples from the start
-    """
     if type is None:
         return None
 
@@ -534,6 +485,9 @@ def pygame_shape_constructor(
             result.append(([head.shape, st, fl1, fl2, fl3], 'thirtysecond'))
 
         # ── half ─────────────────────────────────────────────────────────────
+        # FIX: use head.shapes (not head.shape) so the inner white polygon is
+        # included.  The hollow head now returns [outer_polygon, inner_white]
+        # instead of a thick PygamePolyline, which was spotty at larger sizes.
         case 'half':
             if not _need(shape_x, shape_y, shape_width, shape_height):
                 return None
@@ -546,7 +500,8 @@ def pygame_shape_constructor(
             stem_x = sx - (ox-sx)*0.069
             st = _stem(stem_x, sy + (oy-sy)*0.3, stem_x, top_y,
                        shape_width, color)
-            result.append(([head.shape, st], 'half'))
+            # *head.shapes unpacks [outer, inner_white] into the shape list
+            result.append(([*head.shapes, st], 'half'))
 
         # ── whole ─────────────────────────────────────────────────────────────
         case 'whole':
@@ -658,10 +613,13 @@ def pygame_shape_constructor(
             result.append(([v1, c1, v2, c2], 'bb'))
 
         # ── bar line ──────────────────────────────────────────────────────────
+        # FIX: shape_width IS the desired pixel width for bar lines.
+        # Using _accidental_sw would multiply by 0.15 — e.g. a 3 px bar
+        # becomes 0.45, rounds to 1, and every bar looks hair-thin.
         case 'bar':
             if not _need(shape_x, shape_y, shape_height):
                 return None
-            sw  = _accidental_sw(paint, shape_width or 2)
+            sw = float(shape_width) if shape_width is not None else 2.0
             bar = PygameLine(
                 shape_x, shape_y,
                 shape_x, shape_y + shape_height,

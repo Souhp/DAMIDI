@@ -17,6 +17,6 @@ class PRScene(WidgetScene):
 		return "example"
 
 	def setup_widgets(self):
-		self.staff = StaffWidget(bg_color=(255, 255, 255))
+		self.staff = StaffWidget()
 		self.add_widget(self.staff, col=0, row=0)
 

@@ -51,6 +51,7 @@ import pygame
 import pygame_gui
 from modules.childWidget import ChildWidget
 from time import monotonic
+import math
 
 _VISIBLE_16 = {6, 8, 10, 12, 14}
 _VISIBLE_32 = {6, 8, 10, 12, 14, 18, 20, 22, 24, 26}
@@ -86,7 +87,7 @@ class StaffWidget(ChildWidget):
 			"_paused_remaining",
 		)
 
-		def __init__(self, duration_seconds, scale=1.0):
+		def __init__(self, duration_seconds, scale=2):
 			self.duration = float(duration_seconds)
 			self.time_scale = float(scale)
 			self.end_time = None
@@ -168,14 +169,20 @@ class StaffWidget(ChildWidget):
 		# State
 		# -------------------------
 
-		def tick(self):
-			if self.running() and monotonic() >= self.end_time:
+		def tick(self, now: float | None = None):
+			if not self.running():
+				return
+			if now is None:
+				now = monotonic()
+			if now >= self.end_time:
 				self.end_time = None
 				self.on_finish()
 
-		def remaining(self):
+		def remaining(self, now: float | None = None):
 			if self.running():
-				return max(0.0, self.end_time - monotonic())
+				if now is None:
+					now = monotonic()
+				return max(0.0, self.end_time - now)
 			elif self._paused_remaining is not None:
 				return self._paused_remaining
 			return self.duration
@@ -193,7 +200,7 @@ class StaffWidget(ChildWidget):
 
 	def __init__(
 		self,
-		bg_color:	  tuple = (255, 255, 255, 255),
+		bg_color:	  tuple = (0, 0, 0, 0),
 		border:		  int	= 1,
 		border_color: tuple = (180, 180, 200, 255),
 		showBass=True,
@@ -228,19 +235,24 @@ class StaffWidget(ChildWidget):
 		self.last_played_index	= float('inf')
 		self.staffEventIterGate=0 #this will be the count iteration over the entire events
 									#will gate from going farther than needed
-		self.pixels_per_second	= 120
+		self.pixels_per_second   = 60          # scroll "feel" — lower = slower, smoother
+		self.note_spacing_scale  = 12.0 
 		self.press_window_sec	= 0.2
 		self.current_pressed_midi = {}
 		self.staff_timer=None
 
 
 		# Set after build()
+
+		self.scrollingCanvas:		pygame.Surface | None = None
 		self._canvas:		pygame.Surface | None = None
 		self._canvas_rect:	pygame.Rect    | None = None
 		self.canvas_width:	int = 0
 		self.canvas_height: int = 0
-
 		
+		#for specifically scroll canvas
+		self._scroll_x = 0
+		self._scroll_x_f=0
 
 
 
@@ -266,13 +278,48 @@ class StaffWidget(ChildWidget):
 		)
 
 		self.look_ahead_sec = self.compute_lookahead_seconds(
-				self.canvas_width, self.pixels_per_second
+			self.canvas_width, self.pixels_per_second * self.note_spacing_scale
+		)
+
+
+
+
+	def scrollingStaffSetup(self):
+
+		
+		scrolling=False
+		temp_shape_list = []
+		scroll_width=self.canvas_width
+		if self.dumb_staffEvent:
+			scrolling=True
+			layout_pps  = self.pixels_per_second * self.note_spacing_scale
+			scroll_width = self.staffEvent[1] * layout_pps + self.canvas_width
+
+
+
+			events_to_spawn = self.get_events_lookahead_and_place(
+				total_time     = self.staffEvent[1],
+				countdown_time = self.staffEvent[1],      
+				look_ahead_sec = self.staffEvent[1],
+				check_index=False,
 			)
+			for event in events_to_spawn:
+				event_type = event.get("type")
+				if event_type == "bar":
+					for shape_tuple in event['shapes']:
+						shapes_list, _ = shape_tuple
+						temp_shape_list.extend(shapes_list)
+				elif event_type == "chord":
+					temp_shape_list.extend(event['flat_shapes'])
+		
+
+		self.scrollingCanvas = pygame.Surface((scroll_width, self.canvas_height))
+		
 
 
-	def staffSetup(self):
-		if self._canvas is None:
-			return
+
+
+		self.scrollingCanvas.fill((255, 255, 255))
 		visible  = _VISIBLE_32 if self.numIndexes == 32 else _VISIBLE_16
 		color	 = (0, 0, 0, 255)
 		line_w	 = max(1, self.canvas_height // 200)
@@ -280,8 +327,11 @@ class StaffWidget(ChildWidget):
 		x1		 = self.canvas_width - x0
 		for i in visible:
 			y = int(self._line_ys[i])
-			pygame.draw.line(self._canvas, color, (x0, y), (x1, y), line_w)
+			pygame.draw.line(self.scrollingCanvas, color, (x0, y), (x1, y), line_w)
 
+
+		if scrolling:
+			self.draw_shapes(temp_shape_list, self.scrollingCanvas)
 
 	def mediaBarSetup(self):
 
@@ -326,15 +376,18 @@ class StaffWidget(ChildWidget):
 		self._canvas_rect  = rect.copy()
 		self.canvas_width  = rect.width
 		self.canvas_height = rect.height-self.media_bar_height
-		self._canvas	   = pygame.Surface((self.canvas_width, self.canvas_height), pygame.SRCALPHA)
-		
+		self._canvas = pygame.Surface((self.canvas_width, self.canvas_height),pygame.SRCALPHA)
 		self.precompute_sizes()
 		self.clear()
-		self.staffSetup()
 
 		#mediabar setup
 		self.mediaBarSetup()	
 
+
+		if self.dumb_staffEvent:
+			self.dumb_staffEvent= self.create_dumb_events(self.staffEvent[0])
+
+		self.scrollingStaffSetup()
 
 	def clear(self):
 		if self._canvas is not None:
@@ -408,7 +461,7 @@ class StaffWidget(ChildWidget):
 		"""
 		curr_positions = []
 		prev_positions = prev_positions or set()
-		print(f"prevous positions: {prev_positions}")
+		#print(f"prevous positions: {prev_positions}")
 		if not prev_positions:
 			# determine step based on global rows context
 			if len(row) == 1:
@@ -449,12 +502,12 @@ class StaffWidget(ChildWidget):
 
 		for i in accidentals_list:
 			row = accidentals_list[i]
-			print(f"DEBUG: Processing index {i}, row: {row}")
+			#print(f"DEBUG: Processing index {i}, row: {row}")
 			if (i+1 not in accidentals_list):
 				prev_positions = None
 
 			curr = self.assign_positions(row, i, prev_positions, width)
-			print(f"DEBUG: Positions assigned: {curr}")
+			#print(f"DEBUG: Positions assigned: {curr}")
 			prev_positions = set(curr)
 
 			count = 0
@@ -464,17 +517,17 @@ class StaffWidget(ChildWidget):
 				# ← UNPACK TUPLE OR USE STRING
 				if isinstance(x, tuple):
 					accidental_char, note_x = x
-					print(f"DEBUG: Unpacked tuple - accidental={accidental_char}, note_x={note_x}")
+					#print(f"DEBUG: Unpacked tuple - accidental={accidental_char}, note_x={note_x}")
 				else:
 					accidental_char = x
 					note_x = default_note_position
-					print(f"DEBUG: Using string - accidental={accidental_char}, note_x={note_x}")
+					#print(f"DEBUG: Using string - accidental={accidental_char}, note_x={note_x}")
 				
 				position_mult = curr[count] + 1
 				count += 1
 				
 				accidental_x = (note_x + note_width/2) - ((note_width*0.9)*int(position_mult))
-				print(f"DEBUG: accidental_x for {accidental_char} = {accidental_x}, note_x={note_x}, default_note_position={default_note_position}")
+				#print(f"DEBUG: accidental_x for {accidental_char} = {accidental_x}, note_x={note_x}, default_note_position={default_note_position}")
 
 				# Use shape_constructor for accidentals
 				accidental_shapes = pygame_shape_constructor(
@@ -490,7 +543,7 @@ class StaffWidget(ChildWidget):
 				
 				return_list.extend(accidental_shapes)
 
-		print(f"DEBUG: make_accidentals returning {len(return_list)} accidentals")
+		#print(f"DEBUG: make_accidentals returning {len(return_list)} accidentals")
 		return return_list
 
 
@@ -624,7 +677,7 @@ class StaffWidget(ChildWidget):
 			default_last_played=True
 			last_played_index=self.last_played_index
 
-		print(f"Index is: {index}")
+		#print(f"Index is: {index}")
 		
 		y = self.line_y(index)			# ← replaces top_margin arithmetic
 		
@@ -644,7 +697,7 @@ class StaffWidget(ChildWidget):
 
 		x = final_position
 		
-		print(f"DEBUG make_note: final_position={final_position}, position={position}, self.default_note_position={self.default_note_position}")
+		#print(f"DEBUG make_note: final_position={final_position}, position={position}, self.default_note_position={self.default_note_position}")
 		
 
 
@@ -716,12 +769,12 @@ class StaffWidget(ChildWidget):
 						del accidentals[index_to_change]
 
 		else:
-			if accidental == "#":
-				print("found accidental sharp")
-			elif accidental == "b":
-				print("found accidental flat")
-			elif accidental == "N":
-				print("found accidental Natural")
+			#if accidental == "#":
+				#print("found accidental sharp")
+			#elif accidental == "b":
+				#print("found accidental flat")
+			#elif accidental == "N":
+				#print("found accidental Natural")
 
 			if index in accidentals:
 				t_list=accidentals[index]
@@ -768,7 +821,7 @@ class StaffWidget(ChildWidget):
 
 		try:
 			self.last_played_index=index
-			print("setting index for next time!!")
+			#print("setting index for next time!!")
 		except UnboundLocalError:
 			print("error 1647 ds")
 			pass
@@ -803,7 +856,7 @@ class StaffWidget(ChildWidget):
 				bar_top    = self._line_ys[0]
 				bar_bottom = self._line_ys[-1]
 				bar_shapes = pygame_shape_constructor(
-					shape_x		 = self.default_note_position + self.note_width / 2,
+					shape_x = self.default_note_position + self.note_width / 2,
 					shape_y		 = bar_top,
 					shape_height = bar_bottom - bar_top,
 					shape_width  = max(1, self.canvas_height // 200),  # line width
@@ -923,7 +976,7 @@ class StaffWidget(ChildWidget):
 
 		_GREEN = (0, 200, 0, 255)
 
-		def _shift_and_color(shape):
+		def _shift_and_color(shape,color=None):
 			self._shift_drawable_x(shape, dx)
 			if color is not None:
 				shape.set_color(color)
@@ -942,10 +995,10 @@ class StaffWidget(ChildWidget):
 				for note_block in note_group:
 					if isinstance(note_block, list):
 						for shape in note_block[:-1]:
-							_shift_and_color(shape)
+							_shift_and_color(shape,color=color)
 			for acc_block in accidental_shapes:
 				for shape in acc_block[0]:
-					_shift_and_color(shape)
+					_shift_and_color(shape,color=color)
 
 
 	def compute_lookahead_seconds(self, screen_length_px, pixels_per_second,
@@ -961,6 +1014,7 @@ class StaffWidget(ChildWidget):
 		include_bars=True,
 		events=None,
 		check_index=True,
+		color=None
 	):
 		"""Amortized O(1) lookahead."""
 		_GREEN = (0, 200, 0, 255)
@@ -986,7 +1040,7 @@ class StaffWidget(ChildWidget):
 				i += 1
 				continue
 
-			start = float(start) * 5
+			start = float(start)
 
 			# kill off events that are well behind the playhead
 			if current_time > start + 1.6:
@@ -997,7 +1051,11 @@ class StaffWidget(ChildWidget):
 			if start >= window_end:
 				break
 
-			event['x_position'] = self.canvas_width - ((start - current_time) * self.pixels_per_second)
+			# get_events_lookahead_and_place
+			layout_pps = self.pixels_per_second * self.note_spacing_scale
+			event['x_position'] = (
+				self.canvas_width - ((start - current_time) * layout_pps)
+			)			
 			press_window = self.press_window_sec
 
 			in_press_window = (current_time >= start - press_window and
@@ -1016,7 +1074,7 @@ class StaffWidget(ChildWidget):
 								del temp_midi[pitch]
 							self.current_pressed_midi = temp_midi
 						else:
-							self.edit_shape(event)
+							self.edit_shape(event,color=color)
 
 					elif pitch_list[0] in temp_midi:
 						self.edit_shape(event, color=_GREEN)
@@ -1025,9 +1083,9 @@ class StaffWidget(ChildWidget):
 					else:
 						self.edit_shape(event)
 				else:
-					self.edit_shape(event)
+					self.edit_shape(event,color=color)
 			else:
-				self.edit_shape(event)
+				self.edit_shape(event,color=color)
 
 			result.append(event)
 			i += 1
@@ -1048,9 +1106,10 @@ class StaffWidget(ChildWidget):
 		"""
 		if self._canvas is not None:
 			self._canvas.fill(self._bg_color)
-			
 
-	def draw_shape(self, shape):
+		
+
+	def draw_shape(self, shape,canvas):
 		"""
 		Draw a single PygameShape onto the canvas immediately.
 
@@ -1058,30 +1117,42 @@ class StaffWidget(ChildWidget):
 		Coordinates in the shape should be relative to the canvas origin
 		(i.e. the widget's top-left corner).
 		"""
-		if self._canvas is not None:
-			shape.draw(self._canvas)
+		if canvas is not None:
+			shape.draw(canvas)
 
-	def draw_shapes(self, shapes):
+	def draw_shapes(self, shapes,canvas):
 		"""
 		Draw a list of PygameShapes onto the canvas in one call.
 
 		shapes may be any iterable of PygameShape instances.
 		"""
-		if self._canvas is not None:
+		if canvas is not None:
 			for shape in shapes:
-				shape.draw(self._canvas)
+				shape.draw(canvas)
 
 	# ── ChildWidget draw (called by WidgetScene every frame) ──────────────────
 
 	def draw(self):
-		if self._canvas is not None and self._canvas_rect is not None:
-			# Draw background and border directly — no pygame_gui involved
-			pygame.draw.rect(self.screen, self._bg_color, self._canvas_rect)
-			self.screen.blit(self._canvas, self._canvas_rect.topleft)
-			if self._border:
-				pygame.draw.rect(self.screen, self._border_color,
-								self._canvas_rect, self._border)
+		if self._canvas is None or self._canvas_rect is None:
+			return
 
+		# 1. scroll the background canvas into screen
+		if self.scrollingCanvas is not None:
+			src_x = max(0, min(
+				-self._scroll_x_f,
+				self.scrollingCanvas.get_width() - self.canvas_width
+			))
+			self.screen.blit(
+				self.scrollingCanvas,
+				self._canvas_rect.topleft,
+				pygame.Rect(src_x, 0, self.canvas_width, self.canvas_height)
+			)
+
+		# 2. overlay _canvas on top (transparent except for highlights etc.)
+		self.screen.blit(self._canvas, self._canvas_rect.topleft)
+
+		if self._border:
+			pygame.draw.rect(self.screen, self._border_color, self._canvas_rect, self._border)
 	# ── coordinate helpers ────────────────────────────────────────────────────
 
 	def canvas_rect(self) -> pygame.Rect | None:
@@ -1149,41 +1220,58 @@ class StaffWidget(ChildWidget):
 
 
 
-	def update(self,deltaTime):
+	def update(self, deltaTime):
+		if not (self.staff_timer and self.staff_timer.running()):
+			return
 
-		if self.staff_timer and self.staff_timer.running():
+		now = monotonic()
+		wall_countdown = max(0.0, self.staff_timer.end_time - now)
+		current_time   = self.staffEvent[1] - (wall_countdown * self.staff_timer.time_scale)
 
-			self.clear()
-			self.staff_timer.tick()
+		target_scroll_x  = -(current_time * self.pixels_per_second)
+		lerp_factor      = min(1.0, deltaTime * 20)
+		self._scroll_x_f += (target_scroll_x - self._scroll_x_f) * lerp_factor
+		self._scroll_x   = math.floor(self._scroll_x_f)
+
+		if now >= self.staff_timer.end_time:
+			self.staff_timer.end_time = None
+			self.staff_timer.on_finish()
+			return
+
+		# clear _canvas for overlays only (highlights, cursor line, etc.)
+		self.clear()
+
+		debug=False
+		if debug:
+				
+			# ── ONE time snapshot for the entire frame ────────────────────────
+			# Calling monotonic() twice (once in tick(), once in remaining())
+			# lets OS scheduling jitter sneak in between calls and cause jumps.
+
+
 			
-			temp_shape_list=[]
 			events_to_spawn = self.get_events_lookahead_and_place(
-				total_time=self.staffEvent[1],
-				countdown_time=self.staff_timer.remaining(),
-				look_ahead_sec=self.look_ahead_sec,
+				total_time     = self.staffEvent[1],
+				countdown_time = wall_countdown	 ,      # ← frozen snapshot, not a fresh call
+				look_ahead_sec = self.look_ahead_sec,
+				color='blue'
 			)
+
+			temp_shape_list = []
 			for event in events_to_spawn:
 				event_type = event.get("type")
-				
 				if event_type == "bar":
-					# Bar shapes come directly from shape_constructor: [([bar_line], 'bar')]
-					bar_shapes = event['shapes']
-					for shape_tuple in bar_shapes:
-						shapes_list, shape_type = shape_tuple
-						for shape in shapes_list:
-							temp_shape_list.append(shape)
-				
+					for shape_tuple in event['shapes']:
+						shapes_list, _ = shape_tuple
+						temp_shape_list.extend(shapes_list)
 				elif event_type == "chord":
 					temp_shape_list.extend(event['flat_shapes'])
 
-			self.staffSetup()
-			self.draw_shapes(temp_shape_list)
+			#self.staffSetup()
+			self.draw_shapes(temp_shape_list,self._canvas)
 
-		
-		#print("ticked")
-		pass
-	def on_destroy(self):
-		if self._canvas is not None:
-			del self._canvas
-			self._canvas = None
-		self._file_dialog = None
+		def on_destroy(self):
+			if self._canvas is not None:
+				del self._canvas
+				self._canvas = None
+			self._file_dialog = none
