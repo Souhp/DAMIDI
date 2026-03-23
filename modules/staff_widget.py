@@ -235,8 +235,8 @@ class StaffWidget(ChildWidget):
 		self.last_played_index	= float('inf')
 		self.staffEventIterGate=0 #this will be the count iteration over the entire events
 									#will gate from going farther than needed
-		self.pixels_per_second   = 60          # scroll "feel" — lower = slower, smoother
-		self.note_spacing_scale  = 12.0 
+		self.pixels_per_second   = 120          # scroll "feel" — lower = slower, smoother
+		self.note_spacing_scale  = 6.0 
 		self.press_window_sec	= 0.2
 		self.current_pressed_midi = {}
 		self.staff_timer=None
@@ -251,7 +251,6 @@ class StaffWidget(ChildWidget):
 		self.canvas_height: int = 0
 		
 		#for specifically scroll canvas
-		self._scroll_x = 0
 		self._scroll_x_f=0
 
 
@@ -1139,7 +1138,7 @@ class StaffWidget(ChildWidget):
 		# 1. scroll the background canvas into screen
 		if self.scrollingCanvas is not None:
 			src_x = max(0, min(
-				-self._scroll_x_f,
+				int(-self._scroll_x_f),   # truncate, not floor — same thing for positive values
 				self.scrollingCanvas.get_width() - self.canvas_width
 			))
 			self.screen.blit(
@@ -1228,10 +1227,8 @@ class StaffWidget(ChildWidget):
 		wall_countdown = max(0.0, self.staff_timer.end_time - now)
 		current_time   = self.staffEvent[1] - (wall_countdown * self.staff_timer.time_scale)
 
-		target_scroll_x  = -(current_time * self.pixels_per_second)
-		lerp_factor      = min(1.0, deltaTime * 20)
-		self._scroll_x_f += (target_scroll_x - self._scroll_x_f) * lerp_factor
-		self._scroll_x   = math.floor(self._scroll_x_f)
+		# Direct — no lerp, no floor
+		self._scroll_x_f = -(current_time * self.pixels_per_second)
 
 		if now >= self.staff_timer.end_time:
 			self.staff_timer.end_time = None
