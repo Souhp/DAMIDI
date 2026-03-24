@@ -28,7 +28,7 @@ class StaffWidget(ChildWidget):
 			"_paused_remaining",
 		)
 
-		def __init__(self, duration_seconds, scale=1.0):
+		def __init__(self, duration_seconds, scale=0.2):
 			self.duration = float(duration_seconds)
 			self.time_scale = float(scale)
 			self.end_time = None
@@ -65,13 +65,13 @@ class StaffWidget(ChildWidget):
 
 		def resume(self):
 			if self._paused_remaining is not None:
-				self.end_time = monotonic() + self._paused_remaining
+				self.end_time = monotonic() + self._paused_remaining / self.time_scale  # was: no division
 				self._paused_remaining = None
 
 		def skip(self, seconds):
 			if not self.running():
 				return
-			self.end_time -= seconds / self.time_scale
+			self.end_time -= seconds / self.time_scale  # was: no division
 
 		def set_scale(self, scale):
 			if scale <= 0:
@@ -96,7 +96,7 @@ class StaffWidget(ChildWidget):
 			if self.running():
 				if now is None:
 					now = monotonic()
-				return max(0.0, self.end_time - now)
+				return max(0.0, (self.end_time - now) * self.time_scale)  # was: end_time - now
 			elif self._paused_remaining is not None:
 				return self._paused_remaining
 			return self.duration
@@ -110,12 +110,15 @@ class StaffWidget(ChildWidget):
 
 	def __init__(
 		self,
-		bg_color:	  tuple = (255, 255, 255, 255),
+		bg_color:	  tuple = (0, 0, 0, 0),
 		border:		  int	= 1,
 		border_color: tuple = (180, 180, 200, 255),
 		showBass=True,
 		injected_note_staff_division=None
 	):
+		self.scrollingCanvas: pygame.Surface | None = None
+		self._canvas:         pygame.Surface | None = None
+		self._canvas_rect:    pygame.Rect    | None = None
 		super().__init__()
 		self._bg_color	   = bg_color
 		self._border	   = border
@@ -147,14 +150,12 @@ class StaffWidget(ChildWidget):
 		# Increase to spread notes further apart without changing how fast they scroll.
 		# layout_pps = pixels_per_second * note_spacing_scale is used everywhere
 		# notes are placed or measured, so the two stay in sync automatically.
-		self.note_spacing_scale = 8.0
+		self.note_spacing_scale = 12.0
 		self.press_window_sec   = 0.2
 		self.current_pressed_midi = {}
 		self.staff_timer = None
 
-		self.scrollingCanvas: pygame.Surface | None = None
-		self._canvas:         pygame.Surface | None = None
-		self._canvas_rect:    pygame.Rect    | None = None
+
 		self.canvas_width:  int = 0
 		self.canvas_height: int = 0
 		self._scroll_x = 0
@@ -263,7 +264,7 @@ class StaffWidget(ChildWidget):
 		self._canvas_rect  = rect.copy()
 		self.canvas_width  = rect.width
 		self.canvas_height = rect.height - self.media_bar_height
-		self._canvas = pygame.Surface((self.canvas_width, self.canvas_height))
+		self._canvas = pygame.Surface((self.canvas_width, self.canvas_height),pygame.SRCALPHA)
 		self.precompute_sizes()
 		self.clear()
 
@@ -911,12 +912,14 @@ class StaffWidget(ChildWidget):
 		if not (self.staff_timer and self.staff_timer.running()):
 			return
 
-		now            = monotonic()
-		countdown_time = max(0.0, self.staff_timer.end_time - now)
-		current_time   = self.staffEvent[1] - countdown_time
-		# CHANGE 3d: scroll offset uses layout_pps to stay in sync with note positions
-		self._scroll_x = -round(current_time * self.layout_pps)
+		now = monotonic()
+		countdown_time = max(0.0, (self.staff_timer.end_time - now) * self.staff_timer.time_scale)
+		current_time = self.staffEvent[1] - countdown_time
 
+		target_x = -(current_time * self.layout_pps)
+
+		smoothing = 1   # higher = snappier
+		self._scroll_x += (target_x - self._scroll_x) * min(1, smoothing * deltaTime)		
 		debug = False
 		if debug:
 			if now >= self.staff_timer.end_time:
