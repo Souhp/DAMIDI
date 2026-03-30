@@ -6,7 +6,7 @@ from sceneManager import SceneManager
 
 def main():
 	pygame.init()
-	screen = pygame.display.set_mode((800, 600), pygame.RESIZABLE)
+	screen = pygame.display.set_mode((800, 600), pygame.RESIZABLE,vsync=1)
 	pygame.display.set_caption("Scene Manager")
 	clock = pygame.time.Clock()
 
@@ -25,7 +25,7 @@ def main():
 
 	running = True
 	while running:
-		dt = clock.tick(200) / 1000.0
+		dt = clock.tick(100) / 1000.0
 
 		for event in pygame.event.get():
 			if event.type == pygame.QUIT:

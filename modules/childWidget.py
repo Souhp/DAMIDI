@@ -6,7 +6,9 @@ from sceneConstants import BASE_W, BASE_H
 
 class ChildWidget:
 	def __init__(self):
-		self._elements: list			   = []
+		self._elements: list = []
+		self._groups: dict[str, list] = {}			# named sub-groups
+		self._group_builders: dict[str, callable] = {}	# name → rebuild fn
 		self._rect:		pygame.Rect | None = None
 
 		self.screen:  pygame.Surface	   | None = None
@@ -15,10 +17,42 @@ class ChildWidget:
 
 		self._tasks: list = []	 # concurrent.futures.Future
 
-		self._event_handlers: list[tuple] = []   # (event_type, predicate, callback)
+		self._event_handlers: list[tuple] = []	 # (event_type, predicate, callback)
 
 
 		self._cancelled = False
+
+
+	# ── group-aware element registration ──────────────────────────────────
+	def _add(self, el, group: str | None = None):
+		self._elements.append(el)
+		if group is not None:
+			self._groups.setdefault(group, []).append(el)
+		return el
+
+	def register_group(self, name: str, builder: callable):
+		"""
+		Register a callable that (re)builds a named group.
+		builder receives no args — use self inside it.
+		
+		Usage:
+			self.register_group("score_display", self._build_score_display)
+		"""
+		self._group_builders[name] = builder
+
+	def refresh_group(self, name: str):
+		# Kill elements
+		for el in self._groups.pop(name, []):
+			self._elements.remove(el)
+			el.kill()
+		# Purge handlers belonging to this group
+		self._event_handlers = [
+			h for h in self._event_handlers if h[3] != name
+		]
+		# Rebuild
+		builder = self._group_builders.get(name)
+		if builder:
+			builder()
 
 	# ── async support ─────────────────────────────────────────────────────
 	@property
@@ -54,19 +88,14 @@ class ChildWidget:
 		self._tasks.clear()
 
 
-	def on_event(self, event_type: int, callback, *, element=None):
-		self._event_handlers.append((event_type, element, callback))
+	def on_event(self, event_type: int, callback, *, element=None, group: str | None = None):
+		self._event_handlers.append((event_type, element, callback, group))
 
 	
 
 	def handle_event(self, event: pygame.event.Event):
-		#
-		#if not found in _event_handlers it will pass to the unique instance
-		#so that the custom events can be processed and eaten up
-		#
-		
-		passDownCheck=False
-		for ev_type, element, callback in self._event_handlers:
+		passDownCheck = False
+		for ev_type, element, callback, _group in self._event_handlers:
 			if event.type != ev_type:
 				continue
 			if element is not None and getattr(event, "ui_element", None) is not element:
@@ -74,24 +103,22 @@ class ChildWidget:
 			result = callback(event)
 			if asyncio.iscoroutine(result):
 				self.run_task(result)
-				passDownCheck=True
+				passDownCheck = True
 		if passDownCheck:
 			return
 		else:
 			self.on_non_generic_pygame_event(event)
 
 	# ── element helpers ───────────────────────────────────────────────────
-	def _add(self, el):
-		self._elements.append(el)
-		return el
+
 
 	def destroy(self):
 		for el in self._elements:
 			el.kill()
 		self._elements.clear()
+		self._groups.clear()
 		self._cancel_tasks()
-
-		self._event_handlers.clear()  
+		self._event_handlers.clear()
 		self.on_destroy()
 
 	def build(self, rect, screen, manager, ui):
@@ -115,7 +142,7 @@ class ChildWidget:
 
 	# ── override these ────────────────────────────────────────────────────
 	def _build_widget_ui(self, rect: pygame.Rect): pass
-	def update(self, dt: float): pass
+	def update(self, dt: float,midi_notes): pass
 	def draw(self): pass
 	def on_destroy(self): pass
 

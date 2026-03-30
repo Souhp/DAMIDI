@@ -7,6 +7,7 @@ import asyncio
 import os
 import sys
 from modules.pychord.constants import all_scales
+from modules.midiListener import MidiListener
 
 # Ensure the directory that contains sceneManager.py itself is on sys.path so
 # that sibling modules (childWidget, sceneConstants, staff_widget, …) are always
@@ -292,6 +293,7 @@ class WidgetScene(Scene):
 		self._sidebar_panel: object | None		 = None
 		# (UIButton, callback) for sidebar items
 		self._sidebar_items: list[tuple]		 = []
+		self.midiListener=self.manager.midiListener
 
 	# ── public API ────────────────────────────────────────────────────────────
 	def add_widget(self, widget: ChildWidget,
@@ -455,8 +457,11 @@ class WidgetScene(Scene):
 			widget.handle_event(event)
 
 	def update(self, dt: float):
+		midi_notes=None
+		if self.midiListener:
+			midi_notes=self.midiListener.tick()
 		for widget, *_ in self._widget_slots:
-			widget.update(dt)
+			widget.update(dt,midi_notes)
 
 	def draw(self):
 		"""Fill background, paint navbar stripe, then let widgets draw."""
@@ -494,13 +499,17 @@ class SceneManager:
 		self.screen		= screen
 		self.ui			= ui
 		self.name_stack: list[str]				= []
-		self.current:	 Scene | None			= None
+		self.current:	 Scene | None			= None #current scene
 		self.registry:	 dict[str, type[Scene]] = {}
 
 
 		self.music_scale_key  = default_music_scale_key
 		self.chromatic_music_scale=all_scales.chromatic_major_scales[self.music_scale_key]
 		self.non_chromatic_music_scale=all_scales.major_scales[self.music_scale_key]
+		self.midiListener = None 
+
+
+
 		# Font registration
 		if font_name and font_path:
 			ui.get_theme().get_font_dictionary().add_font_path(font_name, font_path)
@@ -517,7 +526,15 @@ class SceneManager:
 			self.load_pages(pages_dir)
 
 
+	def setupMidiListener(self,deviceName):
+		self.disconnectMidiListener()
+		self.midiListener=MidiListener(deviceName)
 
+	def disconnectMidiListener(self):
+		if self.midiListener:
+			self.midiListener.close()
+			self.midiListener=None
+	
 
 	def midi_to_scale_note(self,pitch):
 
