@@ -142,7 +142,7 @@ class ChildWidget:
 
 	# ── override these ────────────────────────────────────────────────────
 	def _build_widget_ui(self, rect: pygame.Rect): pass
-	def update(self, dt: float,midi_notes): pass
+	def update(self, dt: float,midi_notes,changed_midi): pass
 	def draw(self): pass
 	def on_destroy(self): pass
 

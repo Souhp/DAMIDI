@@ -286,6 +286,7 @@ class WidgetScene(Scene):
 
 	def __init__(self, screen, manager, ui):
 		super().__init__(screen, manager, ui)
+		self.cachedMidi=None
 		# (widget, col, row, col_span, row_span)
 		self._widget_slots: list[tuple[ChildWidget, int, int, int, int]] = []
 		self._sidebar_open:  bool				 = False
@@ -457,11 +458,14 @@ class WidgetScene(Scene):
 			widget.handle_event(event)
 
 	def update(self, dt: float):
-		midi_notes=None
+		midi_notes = None
+		changed = False
 		if self.midiListener:
-			midi_notes=self.midiListener.tick()
+			midi_notes = self.midiListener.tick()
+			changed = self.midiListener.updated  # ← already computed inside tick()
+
 		for widget, *_ in self._widget_slots:
-			widget.update(dt,midi_notes)
+			widget.update(dt, midi_notes, changed)
 
 	def draw(self):
 		"""Fill background, paint navbar stripe, then let widgets draw."""

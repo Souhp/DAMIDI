@@ -16,6 +16,19 @@ Key differences from the Cairo version
 • No ctx.save()/restore(), no transform matrices, no Cairo path state.
 • Hollow noteheads are drawn as outer filled polygon + smaller inner white
   polygon — always crisp, no thick-polyline aliasing artefacts.
+
+Color locking
+─────────────
+Each PygameShape has a color_locked flag.  When locked, set_color() is a
+no-op, so edit_shape() calls that reset notes to black each frame silently
+skip already-green (or otherwise pinned) shapes.
+
+Use the module helpers:
+    lock_note_shapes(shape_list)    – lock all non-fill-mask shapes
+    unlock_note_shapes(shape_list)  – unlock all shapes (call on expiry)
+
+Inner "hole" polygons of hollow noteheads carry _is_fill_mask = True and
+are never locked/unlocked by these helpers, so they always stay white.
 """
 
 from __future__ import annotations
@@ -74,6 +87,23 @@ def parse_color(color) -> RGBA:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Color-lock helpers  (module-level, operate on a flat shape list)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def lock_note_shapes(shapes: list) -> None:
+	"""Lock every non-fill-mask shape so set_color() becomes a no-op."""
+	for s in shapes:
+		if not getattr(s, '_is_fill_mask', False):
+			s.lock_color()
+
+
+def unlock_note_shapes(shapes: list) -> None:
+	"""Unlock every shape (call when a note expires so it can be recolored)."""
+	for s in shapes:
+		s.unlock_color()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Bezier / curve sampling utilities
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -126,7 +156,24 @@ def _quad_to_cubic(p0, cp, p1):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PygameShape:
+	"""
+	Base class for all drawable note primitives.
+
+	color_locked
+	────────────
+	When True, set_color() is silently ignored.  This lets the frame loop
+	call edit_shape(event, color=black) every frame without wiping out a
+	note that was already turned green by a correct keypress.
+
+	_is_fill_mask
+	─────────────
+	Set to True on inner "hole" polygons (hollow noteheads, whole notes).
+	lock_note_shapes() skips these so the white hole is never recolored.
+	"""
+
 	color: RGBA = _BLACK
+	color_locked: bool = False
+	_is_fill_mask: bool = False   # inner white polygons set this True
 
 	def draw(self, surface: pygame.Surface) -> None:
 		raise NotImplementedError
@@ -135,23 +182,33 @@ class PygameShape:
 		raise NotImplementedError
 
 	def set_color(self, color) -> None:
+		if self.color_locked:
+			return
 		self.color = parse_color(color)
+
+	def lock_color(self) -> None:
+		self.color_locked = True
+
+	def unlock_color(self) -> None:
+		self.color_locked = False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# PygameLine
+# Concrete shape classes
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PygamePolygon(PygameShape):
-	__slots__ = ("_pts", "color", "_dx")
+	__slots__ = ("_pts", "color", "_dx", "color_locked", "_is_fill_mask")
 
 	def __init__(self, points, color=None):
-		self._pts  = list(points)
-		self._dx   = 0.0						  # ← offset, never reallocates
-		self.color = parse_color(color) if color is not None else _BLACK
+		self._pts		  = list(points)
+		self._dx		  = 0.0
+		self.color		  = parse_color(color) if color is not None else _BLACK
+		self.color_locked = False
+		self._is_fill_mask = False
 
 	def shift_x(self, dx: float):
-		self._dx += dx							  # ← O(1), no allocation
+		self._dx += dx
 
 	def draw(self, surface):
 		if len(self._pts) < 3:
@@ -162,13 +219,15 @@ class PygamePolygon(PygameShape):
 
 
 class PygamePolyline(PygameShape):
-	__slots__ = ("_pts", "color", "stroke_width", "_dx")
+	__slots__ = ("_pts", "color", "stroke_width", "_dx", "color_locked", "_is_fill_mask")
 
 	def __init__(self, points, color=None, stroke_width=1.0):
-		self._pts		  = list(points)
-		self._dx		  = 0.0
-		self.color		  = parse_color(color) if color is not None else _BLACK
-		self.stroke_width = stroke_width
+		self._pts		   = list(points)
+		self._dx		   = 0.0
+		self.color		   = parse_color(color) if color is not None else _BLACK
+		self.stroke_width  = stroke_width
+		self.color_locked  = False
+		self._is_fill_mask = False
 
 	def shift_x(self, dx: float):
 		self._dx += dx
@@ -186,14 +245,17 @@ class PygamePolyline(PygameShape):
 
 
 class PygameLine(PygameShape):
-	__slots__ = ("x1", "y1", "x2", "y2", "color", "stroke_width", "_dx")
+	__slots__ = ("x1", "y1", "x2", "y2", "color", "stroke_width", "_dx",
+				 "color_locked", "_is_fill_mask")
 
 	def __init__(self, x1, y1, x2, y2, color=None, stroke_width=1.0):
-		self.x1, self.y1  = x1, y1
-		self.x2, self.y2  = x2, y2
-		self._dx		  = 0.0
-		self.color		  = parse_color(color) if color is not None else _BLACK
-		self.stroke_width = stroke_width
+		self.x1, self.y1   = x1, y1
+		self.x2, self.y2   = x2, y2
+		self._dx		   = 0.0
+		self.color		   = parse_color(color) if color is not None else _BLACK
+		self.stroke_width  = stroke_width
+		self.color_locked  = False
+		self._is_fill_mask = False
 
 	def shift_x(self, dx: float):
 		self._dx += dx
@@ -210,15 +272,18 @@ class PygameLine(PygameShape):
 
 
 class PygameCircle(PygameShape):
-	__slots__ = ("x", "y", "radius", "color", "stroke_width", "_fill", "_dx")
+	__slots__ = ("x", "y", "radius", "color", "stroke_width", "_fill", "_dx",
+				 "color_locked", "_is_fill_mask")
 
 	def __init__(self, x, y, radius, color=None, stroke_width=1.0, fill=True):
-		self.x, self.y	  = x, y
-		self._dx		  = 0.0
-		self.radius		  = radius
-		self.color		  = parse_color(color) if color is not None else _BLACK
-		self.stroke_width = stroke_width
-		self._fill		  = fill
+		self.x, self.y	   = x, y
+		self._dx		   = 0.0
+		self.radius		   = radius
+		self.color		   = parse_color(color) if color is not None else _BLACK
+		self.stroke_width  = stroke_width
+		self._fill		   = fill
+		self.color_locked  = False
+		self._is_fill_mask = False
 
 	def shift_x(self, dx: float):
 		self._dx += dx
@@ -231,13 +296,16 @@ class PygameCircle(PygameShape):
 
 
 class PygameEllipse(PygameShape):
-	__slots__ = ("x", "y", "width", "height", "color", "_dx")
+	__slots__ = ("x", "y", "width", "height", "color", "_dx",
+				 "color_locked", "_is_fill_mask")
 
 	def __init__(self, x, y, width, height, color=None):
-		self.x, self.y			= x, y
-		self._dx				= 0.0
+		self.x, self.y		   = x, y
+		self._dx			   = 0.0
 		self.width, self.height = width, height
-		self.color				= parse_color(color) if color is not None else _BLACK
+		self.color			   = parse_color(color) if color is not None else _BLACK
+		self.color_locked	   = False
+		self._is_fill_mask	   = False
 
 	def shift_x(self, dx: float):
 		self._dx += dx
@@ -246,6 +314,8 @@ class PygameEllipse(PygameShape):
 		rect = pygame.Rect(round(self.x + self._dx), round(self.y),
 						   max(1, round(self.width)), max(1, round(self.height)))
 		pygame.draw.ellipse(surface, self.color, rect)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PygameNotehead  —  rotated ellipse via pre-sampled rational quadratic arcs
 # ─────────────────────────────────────────────────────────────────────────────
@@ -265,13 +335,13 @@ class PygameNotehead:
 	pygame.draw.lines / aalines with width > 1 produces spotty, uneven strokes;
 	the double-polygon approach is always crisp regardless of size.
 
+	The inner white polygon has _is_fill_mask = True so lock_note_shapes()
+	skips it — it must always stay white regardless of note color.
+
 	.shapes  — list of PygameShape objects to draw (1 for filled, 2 for hollow)
 	.shape	 — the primary (outer) shape, kept for back-compat
 	"""
 
-	# How much to shrink the outer polygon to produce the hollow "hole".
-	# 0.45 gives a ring width of roughly 28 % of the semi-axis — visually
-	# matches engraving conventions at typical staff sizes.
 	_HOLLOW_INNER_SCALE = 0.45
 
 	def __init__(self, cx, cy,
@@ -288,7 +358,6 @@ class PygameNotehead:
 		self._compute_geometry()
 		self._shapes = self._build_shapes()
 
-	# ------------------------------------------------------------------
 	def _compute_geometry(self):
 		a, b   = self._a, self._b
 		cx, cy = self._cx, self._cy
@@ -305,7 +374,6 @@ class PygameNotehead:
 		self.CP30 = (cx + a*c + b*s, cy + a*s - b*c )
 
 	def _sample_outline(self) -> list[tuple[float, float]]:
-		"""Return the pre-sampled ellipse outline points."""
 		pts = []
 		arcs = [
 			(self.P0,  self.CP01, self.P1),
@@ -324,26 +392,19 @@ class PygameNotehead:
 		if not self._hollow:
 			return [outer]
 
-		# ── Hollow: add a smaller white polygon to punch the hole ──────────
-		# Scale all outline points toward the centre by _HOLLOW_INNER_SCALE.
-		# This keeps the rotated orientation perfectly matched to the outer
-		# ring without any trig — and both polygons are always filled, so
-		# pygame.draw.polygon stays crisp at every size.
 		cx, cy = self._cx, self._cy
 		k = self._HOLLOW_INNER_SCALE
 		inner_pts = [(cx + (x - cx) * k, cy + (y - cy) * k) for x, y in pts]
 		inner = PygamePolygon(inner_pts, _WHITE)
+		inner._is_fill_mask = True   # ← never recolored by lock/unlock helpers
 		return [outer, inner]
 
-	# ------------------------------------------------------------------
 	@property
 	def shape(self) -> PygameShape:
-		"""Primary (outer) shape — kept for back-compat."""
 		return self._shapes[0]
 
 	@property
 	def shapes(self) -> list[PygameShape]:
-		"""All shapes needed to render this notehead (outer + optional inner)."""
 		return list(self._shapes)
 
 	@property
@@ -485,9 +546,6 @@ def pygame_shape_constructor(
 			result.append(([head.shape, st, fl1, fl2, fl3], 'thirtysecond'))
 
 		# ── half ─────────────────────────────────────────────────────────────
-		# FIX: use head.shapes (not head.shape) so the inner white polygon is
-		# included.  The hollow head now returns [outer_polygon, inner_white]
-		# instead of a thick PygamePolyline, which was spotty at larger sizes.
 		case 'half':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
@@ -500,7 +558,6 @@ def pygame_shape_constructor(
 			stem_x = sx - (ox-sx)*0.069
 			st = _stem(stem_x, sy + (oy-sy)*0.3, stem_x, top_y,
 					   shape_width, color)
-			# *head.shapes unpacks [outer, inner_white] into the shape list
 			result.append(([*head.shapes, st], 'half'))
 
 		# ── whole ─────────────────────────────────────────────────────────────
@@ -517,6 +574,7 @@ def pygame_shape_constructor(
 				shape_x + shape_height/2.3,
 				shape_y - shape_width/4,
 				shape_height/2.2, shape_width/2, _WHITE)
+			inner._is_fill_mask = True   # ← white hole, never recolored
 			result.append(([outer, inner], 'whole'))
 
 		# ── grace (type == 0) ─────────────────────────────────────────────────
@@ -616,9 +674,6 @@ def pygame_shape_constructor(
 			result.append(([v1, c1, v2, c2], 'bb'))
 
 		# ── bar line ──────────────────────────────────────────────────────────
-		# FIX: shape_width IS the desired pixel width for bar lines.
-		# Using _accidental_sw would multiply by 0.15 — e.g. a 3 px bar
-		# becomes 0.45, rounds to 1, and every bar looks hair-thin.
 		case 'bar':
 			if not _need(shape_x, shape_y, shape_height):
 				return None
