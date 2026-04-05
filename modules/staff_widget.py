@@ -808,8 +808,7 @@ class StaffWidget(ChildWidget):
 	):
 		"""Amortized O(1) lookahead."""
 		_GREEN = (0, 200, 0, 255)
-		_YELLOW = (255, 200, 0, 255)
-		
+
 		current_time = total_time - countdown_time
 		if true_time is None:
 			true_time = current_time
@@ -822,16 +821,14 @@ class StaffWidget(ChildWidget):
 		if events is None:
 			return []
 
-		result   = []
-		n        = len(events)
-		i        = self.staffEventIterGate if check_index else 0
+		result	 = []
+		n		 = len(events)
+		i		 = self.staffEventIterGate if check_index else 0
 		commit_i = i
-
-# build once per frame, not once per event
-		pressed = {p for p, v in self.current_allowed_pressed_midi.items() if v[1]}
 
 		while i < n:
 			event = events[i]
+			#what a shitty language I hate this place
 			chosenColor = event["color"] if event["color"] else color
 			start = event.get("start_sec")
 			if start is None:
@@ -854,17 +851,36 @@ class StaffWidget(ChildWidget):
 
 			in_press_window = abs(true_time - start) <= self.press_window_sec
 
-			if in_press_window and "pitch_list" in event:
-				required = set(event["pitch_list"])
-				if required.issubset(pressed):
-					new_color = _GREEN if len(pressed) == len(required) else _YELLOW
-					event["color"] = new_color
-					self.edit_shape(event, color=new_color)
+			if in_press_window:
+				temp_midi = self.current_allowed_pressed_midi
+				if "pitch_list" in event:
+					pitch_list = event["pitch_list"]
+					if len(pitch_list) > 1:
+
+						blocked=False
+						for index,pitch in enumerate(pitch_list):
+							if pitch not in temp_midi or not temp_midi[pitch][1]:
+								blocked=True
+								break
+
+						if not blocked:
+
+							self.edit_shape(event, color=_GREEN)
+							
+							event["color"]=_GREEN
+						else:
+							self.edit_shape(event, color=chosenColor)
+					elif pitch_list[0] in temp_midi and not temp_midi[pitch_list[0]][1]:
+						event["color"]=_GREEN
+						self.edit_shape(event, color=_GREEN)
+						print(f"single note turned green {pitch_list}")
+					else:
+						self.edit_shape(event, color=chosenColor)
+
 				else:
 					self.edit_shape(event, color=chosenColor)
 			else:
 				self.edit_shape(event, color=chosenColor)
-
 			result.append(event)
 			i += 1
 
