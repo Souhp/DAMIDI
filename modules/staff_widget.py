@@ -198,7 +198,7 @@ class StaffWidget(ChildWidget):
 
 		totalHeight = self._rect.height
 
-		if self.staffEvent:            # ← was: if self.dumb_staffEvent
+		if self.staffEvent:			   # ← was: if self.dumb_staffEvent
 			media_bar_h = int(_MEDIA_BAR_H_BASE * (totalHeight / 600))
 			self.media_bar_height = max(32, min(media_bar_h, 900))
 		else:
@@ -288,8 +288,8 @@ class StaffWidget(ChildWidget):
 		self._debug_overlay = pygame.Surface((self.canvas_width, self.canvas_height), pygame.SRCALPHA)
 		self._debug_font = pygame.font.SysFont("monospace", 14)
 
-		pygame.draw.line(self._debug_overlay, (255, 255, 255, 255),
-						(int(hit_x), 0), (int(hit_x), self.canvas_height), 2)
+		#pygame.draw.line(self._debug_overlay, (255, 255, 255, 255),
+		#				(int(hit_x), 0), (int(hit_x), self.canvas_height), 2)
 
 		band_surf = pygame.Surface((int(press_window_px * 2), self.canvas_height), pygame.SRCALPHA)
 		band_surf.fill((0, 255, 0, 100))
@@ -308,7 +308,7 @@ class StaffWidget(ChildWidget):
 		self.clear()
 		self.overlayStaffSetup()
 		self.precompute_sizes()
-		if self.staffEvent:            # ← guard both together
+		if self.staffEvent:			   # ← guard both together
 			self.mediaBarSetup()
 			self.dumb_staffEvent = self.create_dumb_events(self.staffEvent[0])
 		self.scrollingStaffSetup()
@@ -386,12 +386,12 @@ class StaffWidget(ChildWidget):
 
 
 	def make_accidentals(self, accidentals_list, width=5):
-		note_height           = self.note_height
-		note_width            = self.note_width
+		note_height			  = self.note_height
+		note_width			  = self.note_width
 		default_note_position = self.default_note_position
-		return_list           = []
-		width                 = 8
-		prev_positions        = None
+		return_list			  = []
+		width				  = 8
+		prev_positions		  = None
 
 		for i in sorted(accidentals_list.keys(), reverse=True):
 			row = accidentals_list[i]
@@ -501,12 +501,14 @@ class StaffWidget(ChildWidget):
 		
 		final_position = position
 		
-		if (last_played_index - 1 == index and not jumped):
-			final_position = position + (note_width * 0.8)
-			jumped = True
-		elif (last_played_index == index) and not jumped:
-			final_position = position + note_width
-			jumped = True
+		if not jumped:
+
+			if last_played_index - 1 == index:
+				final_position = position + (note_width * 0.8)
+				jumped = True
+			elif last_played_index == index:  # ← restore this guard
+				final_position = position + note_width
+				jumped = True
 		else:
 			jumped = False
 
@@ -539,40 +541,7 @@ class StaffWidget(ChildWidget):
 				else:
 					t_list.append(t_accidental)
 				accidentals[index] = t_list
-			else:
-				ranged_list = range(3)
-
-				index_to_change = index
-				for i in ranged_list:
-					index_to_change += 7
-					if index_to_change in accidentals:
-						t_accidental = self.accidental_type(new_scale_note, always_accidental=True)
-						if index in accidentals:
-							t_list = accidentals[index]
-						else:
-							t_list = []
-						if is_xml_mode:
-							t_list.append((t_accidental, accidental_ref_x))
-						else:
-							t_list.append(t_accidental)
-						accidentals[index] = t_list
-						del accidentals[index_to_change]
-
-				index_to_change = index
-				for i in ranged_list:
-					index_to_change -= 7
-					if index_to_change in accidentals:
-						t_accidental = self.accidental_type(new_scale_note, always_accidental=True)
-						if index in accidentals:        # ← add this guard
-							t_list = accidentals[index]
-						else:
-							t_list = []
-						if is_xml_mode:
-							t_list.append((t_accidental, accidental_ref_x))
-						else:
-							t_list.append(t_accidental)
-						accidentals[index] = t_list
-						del accidentals[index_to_change]
+			# ← both octave-migration for-loops removed entirely
 		else:
 			if index in accidentals:
 				t_list = accidentals[index]
@@ -614,8 +583,7 @@ class StaffWidget(ChildWidget):
 			self.last_played_index = last_played_index
 			
 		try:
-
-			last_played_index=index
+			last_played_index = index
 			self.last_played_index = index
 		except UnboundLocalError:
 			print("error 1647 ds")
@@ -627,7 +595,6 @@ class StaffWidget(ChildWidget):
 			return return_list, accidentals_list, jumped, last_played_index, final_position
 		else:
 			return return_list
-
 
 	def create_dumb_events(self, events):
 		dumb_events			= []
@@ -656,7 +623,7 @@ class StaffWidget(ChildWidget):
 					"type"	   : event_type,
 					"shapes"   : bar_shapes,
 					"start_sec": bar_start_sec,
-					"color"      : None
+					"color"		 : None
 				})
 
 			elif event_type == "chord":
@@ -719,7 +686,7 @@ class StaffWidget(ChildWidget):
 					"flat_shapes": flat,
 					"start_sec"  : i.get('start_sec'),
 					"pitch_list" : pl,
-					"color"      : None
+					"color"		 : None
 				})
 				last_playable_shape = i
 
@@ -800,7 +767,7 @@ class StaffWidget(ChildWidget):
 		total_time,
 		countdown_time,
 		look_ahead_sec,
-		include_bars=True,
+		backward_window_sec=1.6,
 		events=None,
 		check_index=True,
 		color=None,
@@ -837,7 +804,7 @@ class StaffWidget(ChildWidget):
 
 			start = float(start)
 
-			if current_time > start + 1.6:
+			if current_time > start + backward_window_sec:	 # ← was hardcoded 1.6
 				commit_i = i + 1
 				i += 1
 				continue
@@ -960,9 +927,9 @@ class StaffWidget(ChildWidget):
 		from modules.mxmlParser import parse_musicxml_chords
 		self.staffEvent = parse_musicxml_chords(path)
 		self.staff_timer = self.Timer(self.staffEvent[1])
-		self.dumb_staffEvent = None          # ← prevent stale shapes showing if refresh is deferred
-		self.refresh_group(self.staffElementGroup)   # buildCanvasElements now owns create_dumb_events
-		self.staff_timer.start()         # ← AFTER rebuild is done
+		self.dumb_staffEvent = None			 # ← prevent stale shapes showing if refresh is deferred
+		self.refresh_group(self.staffElementGroup)	 # buildCanvasElements now owns create_dumb_events
+		self.staff_timer.start()		 # ← AFTER rebuild is done
 				
 
 	def on_non_generic_pygame_event(self, event):
@@ -980,74 +947,54 @@ class StaffWidget(ChildWidget):
 				self.changedBuffer = True
 		else:
 			self.changedBuffer = False
-		#print(f"pitches list: {pl}")
 
-		#used in make note for staff notation
-		accidentals={}
-		accidental_state={}
+		accidentals = {}
+		accidental_state = {}
+		last_played_index = float('inf')
+		jumped = False
+		old_pressed_midi = self.current_allowed_pressed_midi
+		self.current_allowed_pressed_midi = {}
+		pl_count = 0
+		self.user_note_shapes = []
 
-
-		last_played_index=float('inf')#default int so that it never triggers first note
-
-
-		jumped=False#if the note was pushed to the side due to them being right next to each other
-		#for staff im saving the pitch list because i need to for ingame size change
-		old_pressed_midi=self.current_allowed_pressed_midi
-		self.current_allowed_pressed_midi={}
-		pl_count=0
-
-		self.user_note_shapes=[]
 		if midi:
-			old_pressed_midi.keys()
+			active = [(p, v) for p, v in enumerate(midi) if v != 0]  # already sorted low→high
+			pitch_list = [p for p, _ in active]
+			current_position = self.default_note_position
 
-			pitch_list = list(midi.keys())   # e.g. [60, 64, 67]
-			for pitch, velocity in midi.items():
-
-
-				if velocity == 0:
-					continue
-				#print(f"midi is {pitch, velocity}")
-
+			for pitch, velocity in active:
 				pl_count += 1
 
 				tscale_note = str(self.manager.midi_to_scale_note(pitch))
-
-				note_name = tscale_note[0]
+				note_name   = tscale_note[0]
 				note_octave = tscale_note[-1]
-
 				new_scale_note = tscale_note[0]
 				for ch in tscale_note[1:]:
 					if ch in ('#', 'b'):
 						new_scale_note += ch
 					else:
-						break  # hit the octave number (or '-'), s
+						break
 
 				if str(note_name + note_octave) in self.note_dic:
 
 					if self.staff_timer and trueTime:
-
-						#keeping the timestamp
 						if pitch in old_pressed_midi:
-
-							timestamp,pressedTooLong = old_pressed_midi[pitch]
+							timestamp, pressedTooLong = old_pressed_midi[pitch]
 							if not pressedTooLong:
 								self.current_allowed_pressed_midi[pitch] = (timestamp, True)
-
 							else:
 								self.current_allowed_pressed_midi[pitch] = old_pressed_midi[pitch]
 						else:
-							self.current_allowed_pressed_midi[pitch] = (trueTime,False)
+							self.current_allowed_pressed_midi[pitch] = (trueTime, False)
 
-
-		
 					if new_scale_note == "B#":
-						index = self.note_dic[str(note_name + str(int(note_octave)-1))]
+						index = self.note_dic[str(note_name + str(int(note_octave) - 1))]
 					else:
 						index = self.note_dic[str(note_name + note_octave)]
 
-					note_result, accidentals, jumped, last_played_index, _ = self.make_note(
+					note_result, accidentals, jumped, last_played_index, current_position = self.make_note(
 						pl_count,
-						position=None,
+						position=None,          # ← tracks offset across notes
 						index=index,
 						accidentals_list=accidentals,
 						new_scale_note=new_scale_note,
@@ -1056,26 +1003,18 @@ class StaffWidget(ChildWidget):
 						last_played_index=last_played_index
 					)
 
-
-
-
 					for note_block in note_result:
 						for shape in note_block[:-1]:
 							self.user_note_shapes.append(shape)
 
-					accidental_state[str(index)] = [s for note_block in note_result for s in note_block[:-1]]		#accidentals are added after because the
-			#y change space retroactively on future accidentals
-			#the accidentals gets added in thesame order as notes get added
-			canvas_art=self.make_accidentals(accidentals)
-			#print("adding_art")
-			for i in canvas_art:
+					accidental_state[str(index)] = [s for note_block in note_result for s in note_block[:-1]]
 
-				if i[-1] in {'#','b','N','##','bb'}:
-					i=i[:-1]
-				#print(f"items in canvas art/accidental list = {i}")
+			canvas_art = self.make_accidentals(accidentals)
+			for i in canvas_art:
+				if i[-1] in {'#', 'b', 'N', '##', 'bb'}:
+					i = i[:-1]
 				for e in i:
-					#print(f'items are: {e}')
-					if type(e)== list:
+					if type(e) == list:
 						for x in e:
 							self.user_note_shapes.append(x)
 					else:
@@ -1103,7 +1042,7 @@ class StaffWidget(ChildWidget):
 
 		now = monotonic()
 		countdown_time = max(0.0, (self.staff_timer.end_time - now) * self.staff_timer.time_scale)
-		trueTime = self.staffEvent[1] - countdown_time   # metronome-accurate, never smoothed
+		trueTime = self.staffEvent[1] - countdown_time	 # metronome-accurate, never smoothed
 
 		# --- scroll smoothing (purely visual) ---
 		target_x = -(trueTime * self.layout_pps)
@@ -1111,7 +1050,7 @@ class StaffWidget(ChildWidget):
 		self._scroll_x += (target_x - self._scroll_x) * min(1.0, smoothing * deltaTime)
 
 		# visual_time: what the scrolling canvas is actually showing right now
-		visual_time     = -self._scroll_x / self.layout_pps
+		visual_time		= -self._scroll_x / self.layout_pps
 		visual_countdown = self.staffEvent[1] - visual_time
 		
 		#sets self.user_note_shapes
@@ -1129,11 +1068,15 @@ class StaffWidget(ChildWidget):
 			self.clear()
 
 			events_to_spawn = self.get_events_lookahead_and_place(
-				total_time     = self.staffEvent[1],
-				countdown_time = visual_countdown,    # ← positions notes via visual_time
-				look_ahead_sec = self.look_ahead_sec,
-				color          = 'blue',
-				true_time      = trueTime,           # ← MIDI window uses real clock
+				total_time	   = self.staffEvent[1],
+				countdown_time = visual_countdown,	  # ← positions notes via visual_time
+				
+				#look_ahead_sec = self.look_ahead_sec,
+				look_ahead_sec = self.press_window_sec,  # tight window
+				color		   = 'blue',
+				true_time	   = trueTime,			 # ← MIDI window uses real clock
+				
+				backward_window_sec =  self.hit_time_offset + self.press_window_sec,   # ← add this
 			)
 
 			temp_shape_list = []

@@ -1,0 +1,18 @@
+same notes octave apart wull eat each others accidental image
+
+staff widget: 546:
+
+for i in ranged_list:
+	index_to_change += 7
+	if index_to_change in accidentals:
+		t_accidental = self.accidental_type(new_scale_note, always_accidental=True)
+		if index in accidentals:
+			t_list = accidentals[index]
+		else:
+			t_list = []
+		if is_xml_mode:
+			t_list.append((t_accidental, accidental_ref_x))
+		else:
+			t_list.append(t_accidental)
+		accidentals[index] = t_list
+		del accidentals[index_to_change]

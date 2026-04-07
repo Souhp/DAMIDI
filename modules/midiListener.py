@@ -5,7 +5,7 @@ class MidiListener:
 	__slots__ = ("active_notes", "updated", "_midi_in", "_events","midiDeviceName")
 
 	def __init__(self, input_name: str):
-		self.active_notes = {}   # pitch -> velocity
+		self.active_notes = [0] * 128	# index = pitch, value = velocity
 		self.updated = False
 		self._events = deque()
 		self.midiDeviceName = input_name
@@ -25,27 +25,24 @@ class MidiListener:
 	def _callback(self, event, data=None):
 		self._events.append(event[0])
 
-	def tick(self) -> dict:
+	def tick(self) -> list:
 		self.updated = False
 		notes  = self.active_notes
 		events = self._events
-
 		while events:
 			msg = events.popleft()
 			if len(msg) < 3:
 				continue
-
 			status = msg[0] & 0xF0
 			if status == 0x90 or status == 0x80:
 				p, v = msg[1], msg[2]
-
 				if status == 0x90 and v > 0:
-					if notes.get(p) != v:
+					if notes[p] != v:
 						notes[p] = v
 						self.updated = True
 				else:
-					if p in notes:
-						del notes[p]
+					if notes[p] != 0:
+						notes[p] = 0
 						self.updated = True
 
 		return notes
