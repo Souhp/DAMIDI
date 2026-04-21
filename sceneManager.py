@@ -8,7 +8,7 @@ import os
 import sys
 from modules.pychord.constants import all_scales
 from modules.midiListener import MidiListener
-
+from modules.audioPlayer import MidiPlayer
 # Ensure the directory that contains sceneManager.py itself is on sys.path so
 # that sibling modules (childWidget, sceneConstants, staff_widget, …) are always
 # importable regardless of where Python is launched from.
@@ -29,7 +29,6 @@ from modules.childWidget import ChildWidget  # re-exported so pages can import f
 # Scale = min(w / BASE_W, h / BASE_H) so squeezing either axis shrinks things.
 BASE_W = 800
 BASE_H = 600
-
 # WidgetScene grid / sidebar constants
 _SIDEBAR_W_FRAC = 0.28	  # sidebar width as fraction of window width
 _GRID_PAD_FRAC	= 0.018   # outer padding around the grid
@@ -292,6 +291,8 @@ class WidgetScene(Scene):
 		self._sidebar_open:  bool				 = False
 		self._sidebar_btn:	 object | None		 = None
 		self._sidebar_panel: object | None		 = None
+
+		self._sidebar_bg: object | None = None
 		# (UIButton, callback) for sidebar items
 		self._sidebar_items: list[tuple]		 = []
 		self.midiListener=self.manager.midiListener
@@ -348,10 +349,6 @@ class WidgetScene(Scene):
 
 	# ── sidebar overlay ───────────────────────────────────────────────────────
 	def _build_sidebar(self):
-		"""
-		Build the floating overlay panel.  It is created AFTER all other
-		elements so pygame_gui renders it on top of everything.
-		"""
 		nav_h	 = self.scaled(50, minimum=36)
 		panel_w  = max(150, int(self.width * _SIDEBAR_W_FRAC))
 		panel_h  = self.height - nav_h
@@ -360,6 +357,7 @@ class WidgetScene(Scene):
 
 		btn_h	 = self.scaled(38, minimum=24)
 		btn_gap  = self.scaled(8,  minimum=4)
+
 
 		# Collect all options from all widgets
 		#all_options: list[tuple[str, callable]] = [("Select Scale",None)]
@@ -372,39 +370,107 @@ class WidgetScene(Scene):
 		# Total content height inside the panel
 		content_h = len(all_options) * (btn_h + btn_gap) + btn_gap
 
-		self._sidebar_panel = self._add(pygame_gui.elements.UIScrollingContainer(
+		self._sidebar_bg = self._add(pygame_gui.elements.UIPanel(
 			relative_rect=pygame.Rect(panel_x, panel_y, panel_w, panel_h),
 			manager=self.ui,
+			object_id="#sidebar_bg",
+			starting_height=10,   # ← force above all widget elements
 		))
-		self._sidebar_panel.set_scrollable_area_dimensions(
-			(panel_w, max(content_h, panel_h))
-		)
 
-		# Populate buttons
+		self._sidebar_panel = self._add(pygame_gui.elements.UIScrollingContainer(
+			relative_rect=pygame.Rect(0, 0, panel_w, panel_h),
+			manager=self.ui,
+			container=self._sidebar_bg,
+		))		# Populate buttons
 		self._sidebar_items.clear()
 		y = btn_gap
-		for label, cb in all_options:
-			btn = self._add(pygame_gui.elements.UIButton(
-				relative_rect=pygame.Rect(btn_gap, y,
-										  panel_w - btn_gap * 2, btn_h),
-				text=label,
-				manager=self.ui,
-				container=self._sidebar_panel,
-				object_id="#page_btn",
-			))
-			self._sidebar_items.append((btn, cb))
-			y += btn_h + btn_gap
+		for opt in all_options:
 
-		# Start hidden unless it was open before the rebuild
-		if not self._sidebar_open:
-			self._sidebar_panel.hide()
+			if isinstance(opt, tuple):
+				# backward compatibility with old format
+				label, cb = opt
+
+				btn = self._add(pygame_gui.elements.UIButton(
+					relative_rect=pygame.Rect(
+						btn_gap, y,
+						panel_w - btn_gap * 2, btn_h
+					),
+					text=label,
+					manager=self.ui,
+					container=self._sidebar_panel,
+					object_id="#page_btn",
+				))
+
+				self._sidebar_items.append((btn, cb))
+				y += btn_h + btn_gap
+
+
+			elif opt["type"] == "dropdown":
+
+				label = opt["label"]
+				options = opt["options"]
+				callback = opt["on_change"]
+
+				lbl_h = self.scaled(24, minimum=24)   # compact label height, not btn_h
+
+				lbl = self._add(pygame_gui.elements.UILabel(
+					relative_rect=pygame.Rect(
+						btn_gap, y,
+						panel_w - btn_gap * 2, lbl_h
+					),
+					text=label,
+					manager=self.ui,
+					container=self._sidebar_panel,
+					object_id="#sidebar_label",   # ← gives it a themeable id
+				))
+
+				y += lbl_h + max(2, btn_gap // 2)  # tighter gap under label
+
+				dropdown = self._add(
+					pygame_gui.elements.UIDropDownMenu(
+						options_list=options,
+						starting_option=options[0],
+						relative_rect=pygame.Rect(
+							btn_gap, y,
+							panel_w - btn_gap * 2, btn_h
+						),
+						manager=self.ui,
+						container=self._sidebar_panel,
+					)
+				)
+
+				self._sidebar_items.append((dropdown, callback))
+
+				y += btn_h + btn_gap
+
+
+			elif opt["type"] == "button":
+
+				btn = self._add(pygame_gui.elements.UIButton(
+					relative_rect=pygame.Rect(
+						btn_gap, y,
+						panel_w - btn_gap * 2, btn_h
+					),
+					text=opt["label"],
+					manager=self.ui,
+					container=self._sidebar_panel,
+					object_id="#page_btn",
+				))
+
+				self._sidebar_items.append((btn, opt["callback"]))
+
+				y += btn_h + btn_gap
+
+				# Start hidden unless it was open before the rebuild
+			if not self._sidebar_open:
+				self._sidebar_bg.hide()
 
 	def _toggle_sidebar(self):
 		self._sidebar_open = not self._sidebar_open
 		if self._sidebar_open:
-			self._sidebar_panel.show()
+			self._sidebar_bg.show()
 		else:
-			self._sidebar_panel.hide()
+			self._sidebar_bg.hide()
 
 	# ── layout widgets in the grid ────────────────────────────────────────────
 	def _layout_widgets(self):
@@ -419,8 +485,8 @@ class WidgetScene(Scene):
 
 	# ── _build_ui override ────────────────────────────────────────────────────
 	def _build_ui(self):
-		self._sidebar_items.clear() 
-		# Destroy old widget elements before killing scene elements
+		self._sidebar_items.clear()
+		self._sidebar_bg = None      # ← add this line
 		for widget, *_ in self._widget_slots:
 			widget.destroy()
 
@@ -451,9 +517,18 @@ class WidgetScene(Scene):
 				if event.ui_element == btn:
 					cb()#RUNS THE CU/STOM FUNCTION OF THE CHILDWIDGETS SIDEBAR
 					self._sidebar_open = False
-					self._sidebar_panel.hide()
+					self._sidebar_bg.hide()   # ← fix
 					return
+		if event.type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED:
+			for element, cb in self._sidebar_items:
+				if event.ui_element == element:
+					selected = element.selected_option
 
+					if isinstance(selected, (list, tuple)):
+						selected = selected[0]
+
+					cb(selected)
+					return
 		for widget, *_ in self._widget_slots:
 			widget.handle_event(event)
 
@@ -510,7 +585,12 @@ class SceneManager:
 		self.music_scale_key  = default_music_scale_key
 		self.chromatic_music_scale=all_scales.chromatic_major_scales[self.music_scale_key]
 		self.non_chromatic_music_scale=all_scales.major_scales[self.music_scale_key]
-		self.midiListener = None 
+		
+		#midilistener from (hopefully) faster module
+		self.midiListener = None
+		#midi player (lightweight from built in funcs from pygame)
+		self.midiAudioPlayer= MidiPlayer("/home/soup/Work/DAMIDI/src/soundFonts/8MBGMSFX.sf2")
+
 
 
 

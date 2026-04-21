@@ -40,7 +40,7 @@ class ChildWidget:
 		"""
 		self._group_builders[name] = builder
 
-	def refresh_group(self, name: str):
+	def mutate_group(self, name: str,mode: str):
 		# Kill elements
 		for el in self._groups.pop(name, []):
 			self._elements.remove(el)
@@ -52,7 +52,9 @@ class ChildWidget:
 		# Rebuild
 		builder = self._group_builders.get(name)
 		if builder:
-			builder()
+			builder(mode)
+
+
 
 	# ── async support ─────────────────────────────────────────────────────
 	@property

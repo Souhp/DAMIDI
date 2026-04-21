@@ -10,11 +10,11 @@
             "normal_border":  "#4a4aaa",
             "hovered_border": "#7070cc"
         },
-		"font": {
-			"name":"IosevkaCharonMono-Regular",
-			"path": "src/fonts/IosevkaCharonMono-Regular.ttf",
-			"size": "15"
-		},
+        "font": {
+            "name": "IosevkaCharonMono-Regular",
+            "path": "src/fonts/IosevkaCharonMono-Regular.ttf",
+            "size": "15"
+        },
         "misc": {
             "border_width":  "1",
             "border_radius": "6",
@@ -27,11 +27,11 @@
             "normal_text": "#d7d7ff",
             "dark_bg":     "#12122a"
         },
-		"font": {
-			"name":"IosevkaCharonMono-Regular",
-			"path": "src/fonts/IosevkaCharonMono-Regular.ttf",
-			"size": "18"
-		}
+        "font": {
+            "name": "IosevkaCharonMono-Regular",
+            "path": "src/fonts/IosevkaCharonMono-Regular.ttf",
+            "size": "18"
+        }
     },
 
     "#page_btn": {
@@ -45,14 +45,53 @@
             "normal_border":  "#4a4aaa",
             "hovered_border": "#8888dd"
         },
-		"font": {
-			"name":"IosevkaCharonMono-Regular",
-			"path": "src/fonts/IosevkaCharonMono-Regular.ttf",
-			"size": "18"
-		},
+        "font": {
+            "name": "IosevkaCharonMono-Regular",
+            "path": "src/fonts/IosevkaCharonMono-Regular.ttf",
+            "size": "18"
+        },
         "misc": {
             "border_width":  "1",
             "border_radius": "10"
         }
-    }
+    },
+
+
+    "#sidebar_label": {
+        "colours": { 
+            "normal_text": "#cccccc"
+        },
+        "font": {
+            "name": "IosevkaCharonMono-Regular",
+            "path": "src/fonts/IosevkaCharonMono-Regular.ttf",
+            "size": "14"
+        }
+    },
+
+
+	"#sidebar_bg": {
+		"colours": {
+			"dark_bg":   "#1a1a36",
+			"normal_bg": "#1a1a36",
+			"border":    "#3a3a6e"
+		},
+		"misc": {
+			"border_width": "1",
+			"shadow_width": "2"
+		}
+	},
+
+
+	"#sidebar_panel": {
+		"colours": {
+			"dark_bg":   "#1a1a36",
+			"normal_bg": "#1a1a36",
+			"border":    "#3a3a6e"
+		},
+		"misc": {
+			"border_width": "1"
+		}
+	}
+
+
 }

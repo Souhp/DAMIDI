@@ -106,7 +106,7 @@ class MidiSelectWidget(ChildWidget):
 		))
 		self.createMidiInfo()
 
-	def createMidiInfo(self):
+	def createMidiInfo(self,*args,**kwargs):
 		if not self.rows or not self.pad:
 			return
 
@@ -161,8 +161,8 @@ class MidiSelectWidget(ChildWidget):
 		)
 
 
-	def refreshMidiOptions(self,event=None):
-		self.refresh_group(self.midiInfoGroup) 
+	def refreshMidiOptions(self,*args,**kwargs):
+		self.mutate_group(self.midiInfoGroup,"refresh") 
 		
 
 
@@ -185,7 +185,19 @@ class MidiSelectWidget(ChildWidget):
 			self.manager.setupMidiListener(selected)
 
 	def sidebar_options(self):
-		return [("Refresh MIDI ports", self._refresh)]
+		return [
+			{
+				"type": "dropdown",
+				"label": "Select Scale",
+				"options": ["C Major", "D Major", "E Major"],
+				"on_change": None
+			},
+			{
+				"type": "button",
+				"label": "Refresh MIDI ports",
+				"callback": self._refresh
+			}
+		]
 
 	def _refresh(self):
 		print("[MidiSelectWidget] this is a fake function fuckkkk refreshing ports — rebuild will happen on next resize/re-enter")

@@ -1363,7 +1363,7 @@ def parse_musicxml_chords(xml_path: str, default_bpm: float = 120):
 	events = []
 	chord_map = {}	 # time_position (rounded) → chord entry
 	bar_times = {}	 # measure_number → start_sec
-
+	listOfTimeSigs=doc.get_time_signatures()
 	for part in doc.parts:
 		
 		in_first_ending = False  # ← track volta state
@@ -1394,18 +1394,25 @@ def parse_musicxml_chords(xml_path: str, default_bpm: float = 120):
 
 				if t_key not in chord_map:
 					chord_map[t_key] = {
-						"measure":	 measure_number,
-						"start_sec": note.note_duration.time_position,
-						"notes":	 [],
+						"measure":      measure_number,
+						"start_sec":    note.note_duration.time_position,
+						"notes":        [],
+						"duration_sec": 0.0,
+						"fractions":    [],
 					}
 
+				fraction = note.note_duration.duration_ratio()
+
 				chord_map[t_key]["notes"].append({
-					"pitch":         note.pitch[1],           # concert pitch — used for MIDI keyboard matching
-					"display_pitch": note.written_midi_pitch, # ← ADD: written pitch — used for staff display
+					"pitch":         note.pitch[1],
+					"display_pitch": note.written_midi_pitch,
 					"note_type":     note.note_duration.type,
 					"dots":          note.note_duration.dots,
 					"duration_div":  note.note_duration.duration,
+					"fraction":      fraction,
 				})
+
+				chord_map[t_key]["fractions"].append(fraction)
 
 	# Bar events
 	for measure_number, start_sec in bar_times.items():
@@ -1418,18 +1425,19 @@ def parse_musicxml_chords(xml_path: str, default_bpm: float = 120):
 
 	# Chord events
 	for t_key, chord in chord_map.items():
+		min_fraction = min(chord["fractions"], default=Fraction(0, 1))
+
 		events.append({
-			"type":		 "chord",
-			"measure":	 chord["measure"],
-			"start_div": int(t_key * doc._state.divisions * 4),
-			"start_sec": chord["start_sec"],
-			"notes":	 chord["notes"],
+			"type":          "chord",
+			"measure":       chord["measure"],
+			"start_div":     int(t_key * doc._state.divisions * 4),
+			"start_sec":     chord["start_sec"],
+			"duration_sec":  chord["duration_sec"],
+			"notes":         chord["notes"],
+			"fractions":     chord["fractions"],     # ✅ full list
+			"min_fraction":  min_fraction,           # ✅ largest one
 		})
 
 	events.sort(key=lambda e: (round(e["start_sec"], 6), 0 if e["type"] == "bar" else 1))
 	print("done parsing in module")
-	return events, doc.total_time_secs
-
-
-
-
+	return events, doc.total_time_secs,listOfTimeSigs
