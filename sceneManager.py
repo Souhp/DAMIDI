@@ -288,13 +288,15 @@ class WidgetScene(Scene):
 		self.cachedMidi=None
 		# (widget, col, row, col_span, row_span)
 		self._widget_slots: list[tuple[ChildWidget, int, int, int, int]] = []
-		self._sidebar_open:  bool				 = False
-		self._sidebar_btn:	 object | None		 = None
-		self._sidebar_panel: object | None		 = None
+		self._sidebar_open:     bool             = False
+		self._sidebar_btn:      object | None    = None
+		self._sidebar_panel:    object | None    = None
 
-		self._sidebar_bg: object | None = None
+		self._sidebar_bg:       object | None    = None
 		# (UIButton, callback) for sidebar items
-		self._sidebar_items: list[tuple]		 = []
+		self._sidebar_items:    list[tuple]      = []
+		# sidebar-owned elements tracked separately for surgical teardown
+		self._sidebar_elements: list             = []
 		self.midiListener=self.manager.midiListener
 
 	# ── public API ────────────────────────────────────────────────────────────
@@ -347,6 +349,13 @@ class WidgetScene(Scene):
 			object_id="#nav_btn",
 		))
 
+	# ── sidebar element registration ─────────────────────────────────────────
+	def _sidebar_add(self, el):
+		"""Like _add but also tracked in _sidebar_elements for surgical teardown."""
+		self._elements.append(el)
+		self._sidebar_elements.append(el)
+		return el
+
 	# ── sidebar overlay ───────────────────────────────────────────────────────
 	def _build_sidebar(self):
 		nav_h	 = self.scaled(50, minimum=36)
@@ -367,21 +376,21 @@ class WidgetScene(Scene):
 		for widget, *_ in self._widget_slots:
 			all_options.extend(widget.sidebar_options())
 
-		# Total content height inside the panel
-		content_h = len(all_options) * (btn_h + btn_gap) + btn_gap
-
-		self._sidebar_bg = self._add(pygame_gui.elements.UIPanel(
+		# Always create the panel and scrolling container fresh
+		self._sidebar_bg = self._sidebar_add(pygame_gui.elements.UIPanel(
 			relative_rect=pygame.Rect(panel_x, panel_y, panel_w, panel_h),
 			manager=self.ui,
 			object_id="#sidebar_bg",
-			starting_height=10,   # ← force above all widget elements
+			starting_height=10,   # force above all widget elements
 		))
 
-		self._sidebar_panel = self._add(pygame_gui.elements.UIScrollingContainer(
+		self._sidebar_panel = self._sidebar_add(pygame_gui.elements.UIScrollingContainer(
 			relative_rect=pygame.Rect(0, 0, panel_w, panel_h),
 			manager=self.ui,
 			container=self._sidebar_bg,
-		))		# Populate buttons
+		))
+
+		# Populate items
 		self._sidebar_items.clear()
 		y = btn_gap
 		for opt in all_options:
@@ -390,7 +399,7 @@ class WidgetScene(Scene):
 				# backward compatibility with old format
 				label, cb = opt
 
-				btn = self._add(pygame_gui.elements.UIButton(
+				btn = self._sidebar_add(pygame_gui.elements.UIButton(
 					relative_rect=pygame.Rect(
 						btn_gap, y,
 						panel_w - btn_gap * 2, btn_h
@@ -404,16 +413,33 @@ class WidgetScene(Scene):
 				self._sidebar_items.append((btn, cb))
 				y += btn_h + btn_gap
 
+			elif opt["type"] == "label":
+				text = opt["text"]
+				lbl_h = self.scaled(24, minimum=24)
+
+				self._sidebar_add(pygame_gui.elements.UILabel(
+					relative_rect=pygame.Rect(
+						btn_gap, y,
+						panel_w - btn_gap * 2, lbl_h
+					),
+					text=text,
+					manager=self.ui,
+					container=self._sidebar_panel,
+					object_id="#sidebar_label",
+				))
+
+				y += lbl_h + max(2, btn_gap // 2)
 
 			elif opt["type"] == "dropdown":
 
-				label = opt["label"]
-				options = opt["options"]
-				callback = opt["on_change"]
+				label        = opt["label"]
+				options      = opt["options"]
+				callback     = opt["on_change"]
+				defaultOption = opt.get("defaultOption", None)
 
-				lbl_h = self.scaled(24, minimum=24)   # compact label height, not btn_h
+				lbl_h = self.scaled(24, minimum=24)
 
-				lbl = self._add(pygame_gui.elements.UILabel(
+				self._sidebar_add(pygame_gui.elements.UILabel(
 					relative_rect=pygame.Rect(
 						btn_gap, y,
 						panel_w - btn_gap * 2, lbl_h
@@ -421,15 +447,15 @@ class WidgetScene(Scene):
 					text=label,
 					manager=self.ui,
 					container=self._sidebar_panel,
-					object_id="#sidebar_label",   # ← gives it a themeable id
+					object_id="#sidebar_label",
 				))
 
-				y += lbl_h + max(2, btn_gap // 2)  # tighter gap under label
+				y += lbl_h + max(2, btn_gap // 2)
 
-				dropdown = self._add(
+				dropdown = self._sidebar_add(
 					pygame_gui.elements.UIDropDownMenu(
 						options_list=options,
-						starting_option=options[0],
+						starting_option=defaultOption if defaultOption else options[0],
 						relative_rect=pygame.Rect(
 							btn_gap, y,
 							panel_w - btn_gap * 2, btn_h
@@ -440,13 +466,58 @@ class WidgetScene(Scene):
 				)
 
 				self._sidebar_items.append((dropdown, callback))
-
 				y += btn_h + btn_gap
 
+			elif opt["type"] == "checkbox_list":
+
+				label    = opt["label"]
+				options  = opt["options"]
+				callback = opt["on_change"]
+				defaults = opt.get("default", [False] * len(options))
+
+				lbl_h = self.scaled(24, minimum=24)
+
+				self._sidebar_add(pygame_gui.elements.UILabel(
+					relative_rect=pygame.Rect(
+						btn_gap, y,
+						panel_w - btn_gap * 2, lbl_h
+					),
+					text=label,
+					manager=self.ui,
+					container=self._sidebar_panel,
+					object_id="#sidebar_label",
+				))
+
+				y += lbl_h + max(2, btn_gap // 2)
+
+				checkboxes = []
+
+				for i, option_text in enumerate(options):
+
+					cb = self._sidebar_add(pygame_gui.elements.UIButton(
+						relative_rect=pygame.Rect(
+							btn_gap, y,
+							panel_w - btn_gap * 2, btn_h
+						),
+						text=f"[{'X' if i < len(defaults) and defaults[i] else ' '}] {option_text}",
+						manager=self.ui,
+						container=self._sidebar_panel,
+						object_id="#checkbox_btn",
+					))
+
+					checkboxes.append({
+						"button":  cb,
+						"label":   option_text,
+						"checked": defaults[i] if i < len(defaults) else False
+					})
+
+					y += btn_h + btn_gap
+
+				self._sidebar_items.append(("checkbox_list", checkboxes, callback))
 
 			elif opt["type"] == "button":
 
-				btn = self._add(pygame_gui.elements.UIButton(
+				btn = self._sidebar_add(pygame_gui.elements.UIButton(
 					relative_rect=pygame.Rect(
 						btn_gap, y,
 						panel_w - btn_gap * 2, btn_h
@@ -458,12 +529,35 @@ class WidgetScene(Scene):
 				))
 
 				self._sidebar_items.append((btn, opt["callback"]))
-
 				y += btn_h + btn_gap
 
-				# Start hidden unless it was open before the rebuild
-			if not self._sidebar_open:
-				self._sidebar_bg.hide()
+		# Start hidden unless the sidebar was already open (e.g. after a rebuild)
+		if not self._sidebar_open:
+			self._sidebar_bg.hide()
+
+
+
+	def rebuild_sidebar(self):
+		"""
+		Surgically destroy and recreate only the sidebar overlay.
+		Safe to call any time a widget's sidebar_options() have changed
+		(e.g. after toggling scroll mode).  Widgets and the navbar are
+		never touched.  The open/closed state is preserved.
+		"""
+		# Kill every sidebar-owned element and remove it from the master list
+		for el in self._sidebar_elements:
+			el.kill()
+			try:
+				self._elements.remove(el)
+			except ValueError:
+				pass
+		self._sidebar_elements.clear()
+		self._sidebar_items.clear()
+		self._sidebar_bg    = None
+		self._sidebar_panel = None
+
+		# Rebuild fresh — sidebar_options() is re-queried from all widgets
+		self._build_sidebar()
 
 	def _toggle_sidebar(self):
 		self._sidebar_open = not self._sidebar_open
@@ -485,14 +579,18 @@ class WidgetScene(Scene):
 
 	# ── _build_ui override ────────────────────────────────────────────────────
 	def _build_ui(self):
+		# Clear sidebar tracking — _kill_elements() (called by resize/enter) already
+		# kills the actual pygame_gui objects; we just need to reset our references.
+		self._sidebar_elements.clear()
 		self._sidebar_items.clear()
-		self._sidebar_bg = None      # ← add this line
+		self._sidebar_bg    = None
+		self._sidebar_panel = None
 		for widget, *_ in self._widget_slots:
 			widget.destroy()
 
-		super()._build_ui()		  # navbar (including sidebar toggle btn)
-		self._layout_widgets()	  # rebuild widget UI inside their grid cells
-		self._build_sidebar()	  # sidebar LAST so it renders on top
+		super()._build_ui()       # navbar (including sidebar toggle btn)
+		self._layout_widgets()    # rebuild widget UI inside their grid cells
+		self._build_sidebar()     # sidebar LAST so it renders on top
 
 	# ── lifecycle ─────────────────────────────────────────────────────────────
 	def on_enter(self):
@@ -510,15 +608,49 @@ class WidgetScene(Scene):
 		super().handle_event(event)  # navbar back button
 
 		if event.type == pygame_gui.UI_BUTTON_PRESSED:
+
 			if self._sidebar_btn and event.ui_element == self._sidebar_btn:
 				self._toggle_sidebar()
 				return
-			for btn, cb in self._sidebar_items:
-				if event.ui_element == btn:
-					cb()#RUNS THE CU/STOM FUNCTION OF THE CHILDWIDGETS SIDEBAR
-					self._sidebar_open = False
-					self._sidebar_bg.hide()   # ← fix
-					return
+
+			for item in self._sidebar_items:
+
+				# ✅ NORMAL BUTTON
+				if isinstance(item, tuple) and len(item) == 2:
+					btn, cb = item
+					if event.ui_element == btn:
+						if cb:
+							cb()
+						self._sidebar_open = False
+						self._sidebar_bg.hide()
+						return
+
+				# ✅ CHECKBOX LIST
+				elif isinstance(item, tuple) and item[0] == "checkbox_list":
+					_, checkboxes, callback = item
+
+					for cb_item in checkboxes:
+						if event.ui_element == cb_item["button"]:
+
+							# toggle state
+							cb_item["checked"] = not cb_item["checked"]
+
+							# update UI
+							cb_item["button"].set_text(
+								f"[{'X' if cb_item['checked'] else ' '}] {cb_item['label']}"
+							)
+
+							# send full state
+							if callback:
+								states = {
+									c["label"]: c["checked"]
+									for c in checkboxes
+								}
+								callback(states)
+
+							return
+
+
 		if event.type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED:
 			for element, cb in self._sidebar_items:
 				if event.ui_element == element:

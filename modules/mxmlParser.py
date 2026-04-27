@@ -760,9 +760,10 @@ class Note(object):
 
 		# Compute MIDI pitch number (C4 = 60, C1 = 24, C0 = 12)
 		midi_pitch = self.pitch_to_midi_pitch(step, alter, octave)
-		self.written_midi_pitch = midi_pitch          # ← ADD: written pitch for display
-		midi_pitch += self.state.transpose            # concert pitch for MIDI matching
+		self.written_midi_pitch = midi_pitch		  # ← ADD: written pitch for display
+		midi_pitch += self.state.transpose			  # concert pitch for MIDI matching
 		self.pitch = (pitch_string, midi_pitch)
+
 	def _parse_tuplet(self, xml_time_modification):
 		"""Parses a tuplet ratio.
 		Represented in MusicXML by the <time-modification> element.
@@ -1347,74 +1348,123 @@ class Tempo(object):
 		tempo_str += " (@time: " + str(self.time_position) + ")"
 		return tempo_str
 
-
-
-
 from collections import defaultdict
-import time
-
-def parse_musicxml_chords(xml_path: str, default_bpm: float = 120):
+from fractions import Fraction
+ 
+ 
+def parse_musicxml_chords(xml_path: str,
+						  default_bpm: float = 120,
+						  part_index: int = 0,
+						  voice: int | None = None):   # ← None = all voices
 	"""
-	Wrapper around MusicXMLDocument that returns the same
-	(events, total_time_sec) tuple as the old parser.
+	Parse a MusicXML file and return
+		(events, total_time_sec, time_signatures)
+ 
+	events is a time-sorted list of dicts, each with type in:
+		"bar"	– barline marker
+		"chord" – one or more simultaneous pitched notes
+		"rest"	– a rest (non-overlapping with chords in the same voice)
+ 
+	Parameters
+	----------
+	xml_path	: path to the .xml / .mxl file
+	default_bpm : fallback tempo when the file has no <sound tempo=…>
+	part_index	: 0-based index into doc.parts — which instrument to follow.
+				  Use get_parts_info(xml_path) to enumerate available parts.
+	voice		: MusicXML voice number to follow within that part (usually 1).
+				  Notes in other voices are silently ignored, which prevents
+				  accompaniment voices from polluting the melody timeline.
 	"""
 	doc = MusicXMLDocument(xml_path, parse=True)
+ 
+	if part_index < 0 or part_index >= len(doc.parts):
+		raise IndexError(
+			f"part_index {part_index} out of range — "
+			f"file has {len(doc.parts)} part(s)"
+		)
+ 
+	target_part = doc.parts[part_index]
+ 
+	events		 = []
+	chord_map	 = {}	# rounded time_position → chord entry  (pitched, voice N)
+	rest_map	 = {}	# rounded time_position → rest entry   (rest,	 voice N)
+	bar_times	 = {}	# measure_number → start_sec
+	listOfTimeSigs = doc.get_time_signatures()
+ 
+	in_first_ending = False
+ 
+	for measure in target_part.measures:
+		measure_number = int(measure.xml_measure.get("number", 0))
+ 
+		# ── detect volta brackets ─────────────────────────────────────────────
+		for barline in measure.xml_measure.findall("barline"):
+			ending = barline.find("ending")
+			if ending is not None:
+				ending_number = ending.get("number", "1")
+				ending_type   = ending.get("type", "")
+				if "1" in ending_number and ending_type == "start":
+					in_first_ending = True
+				elif ending_type in ("stop", "discontinue"):
+					in_first_ending = False
+ 
+		if in_first_ending:
+			continue
+ 
+		if measure_number not in bar_times:
+			bar_times[measure_number] = measure.start_time_position
+ 
+		for note in measure.notes:
+			try:
+				note_voice = int(note.voice)
+			except (TypeError, ValueError, AttributeError):
+				note_voice = 1
 
-	events = []
-	chord_map = {}	 # time_position (rounded) → chord entry
-	bar_times = {}	 # measure_number → start_sec
-	listOfTimeSigs=doc.get_time_signatures()
-	for part in doc.parts:
-		
-		in_first_ending = False  # ← track volta state
-		for measure in part.measures:
-			measure_number = int(measure.xml_measure.get("number", 0))
-			# detect volta brackets
-			for barline in measure.xml_measure.findall("barline"):
-				ending = barline.find("ending")
-				if ending is not None:
-					ending_number = ending.get("number", "1")
-					ending_type = ending.get("type", "")
-					if "1" in ending_number and ending_type == "start":
-						in_first_ending = True
-					elif ending_type in ("stop", "discontinue"):
-						in_first_ending = False
-
-			if in_first_ending:
-				continue  # ← skip first ending measures entirely
-
-			if measure_number not in bar_times:
-				bar_times[measure_number] = measure.start_time_position
-
-			for note in measure.notes:
-				if note.is_rest or note.pitch is None:
-					continue
-
-				t_key = round(note.note_duration.time_position, 6)
-
+			if voice is not None and note_voice != voice:	# ← only filter if voice specified
+				continue 
+			t_key = round(note.note_duration.time_position, 6)
+ 
+			# ── pitched note ──────────────────────────────────────────────────
+			if not note.is_rest and note.pitch is not None:
 				if t_key not in chord_map:
 					chord_map[t_key] = {
-						"measure":      measure_number,
-						"start_sec":    note.note_duration.time_position,
-						"notes":        [],
+						"measure":		measure_number,
+						"start_sec":	note.note_duration.time_position,
+						"notes":		[],
 						"duration_sec": 0.0,
-						"fractions":    [],
+						"fractions":	[],
 					}
-
 				fraction = note.note_duration.duration_ratio()
-
 				chord_map[t_key]["notes"].append({
-					"pitch":         note.pitch[1],
+					"pitch":		 note.pitch[1],
 					"display_pitch": note.written_midi_pitch,
-					"note_type":     note.note_duration.type,
-					"dots":          note.note_duration.dots,
+					"note_type":	 note.note_duration.type,
+					"dots":			 note.note_duration.dots,
 					"duration_div":  note.note_duration.duration,
-					"fraction":      fraction,
+					"fraction":		 fraction,
 				})
-
 				chord_map[t_key]["fractions"].append(fraction)
-
-	# Bar events
+				continue
+ 
+			# ── rest ──────────────────────────────────────────────────────────
+			if note.is_rest:
+				note_type = note.note_duration.type   # may be None for whole-measure rests
+				if not note_type:
+					# Whole-measure rests in MusicXML sometimes omit <type>.
+					# Determine the type from the time signature.
+					note_type = "whole"
+ 
+				if t_key not in rest_map:
+					fraction = note.note_duration.duration_ratio()
+					rest_map[t_key] = {
+						"measure":		measure_number,
+						"start_sec":	note.note_duration.time_position,
+						"duration_sec": note.note_duration.seconds,
+						"note_type":	note_type,
+						"dots":			note.note_duration.dots,
+						"min_fraction": fraction,
+					}
+ 
+	# ── Bar events ────────────────────────────────────────────────────────────
 	for measure_number, start_sec in bar_times.items():
 		events.append({
 			"type":		 "bar",
@@ -1422,22 +1472,90 @@ def parse_musicxml_chords(xml_path: str, default_bpm: float = 120):
 			"start_div": int(start_sec * doc._state.divisions * 4),
 			"start_sec": start_sec,
 		})
-
-	# Chord events
+ 
+	# ── Chord events ──────────────────────────────────────────────────────────
 	for t_key, chord in chord_map.items():
 		min_fraction = min(chord["fractions"], default=Fraction(0, 1))
-
 		events.append({
-			"type":          "chord",
-			"measure":       chord["measure"],
-			"start_div":     int(t_key * doc._state.divisions * 4),
-			"start_sec":     chord["start_sec"],
+			"type":			 "chord",
+			"measure":		 chord["measure"],
+			"start_div":	 int(t_key * doc._state.divisions * 4),
+			"start_sec":	 chord["start_sec"],
 			"duration_sec":  chord["duration_sec"],
-			"notes":         chord["notes"],
-			"fractions":     chord["fractions"],     # ✅ full list
-			"min_fraction":  min_fraction,           # ✅ largest one
+			"notes":		 chord["notes"],
+			"fractions":	 chord["fractions"],
+			"min_fraction":  min_fraction,
 		})
-
-	events.sort(key=lambda e: (round(e["start_sec"], 6), 0 if e["type"] == "bar" else 1))
-	print("done parsing in module")
-	return events, doc.total_time_secs,listOfTimeSigs
+ 
+	# ── Rest events ───────────────────────────────────────────────────────────
+	# Now that chord_map only contains notes from the TARGET voice, this filter
+	# is safe: a rest is only suppressed if there is a pitched note in the same
+	# voice at the exact same time (which would be a notation error anyway).
+	for t_key, rest in rest_map.items():
+		if t_key in chord_map:
+			continue   # pitched note takes precedence at this instant
+		events.append({
+			"type":			 "rest",
+			"measure":		 rest["measure"],
+			"start_div":	 int(t_key * doc._state.divisions * 4),
+			"start_sec":	 rest["start_sec"],
+			"duration_sec":  rest["duration_sec"],
+			"note_type":	 rest["note_type"],
+			"dots":			 rest["dots"],
+			"min_fraction":  rest["min_fraction"],
+		})
+ 
+	events.sort(
+		key=lambda e: (round(e["start_sec"], 6), 0 if e["type"] == "bar" else 1)
+	)
+	print(f"done parsing in module (part_index={part_index}, voice={voice}, "
+		  f"{len(chord_map)} chords, {len(rest_map)} rests)")
+	return events, doc.total_time_secs, listOfTimeSigs
+ 
+ 
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper — call this from a part-picker UI so users can choose which
+# instrument / voice to display.
+# ─────────────────────────────────────────────────────────────────────────────
+ 
+def get_parts_info(xml_path: str) -> list[dict]:
+	"""
+	Return a list of dicts describing each part in the file:
+ 
+		[
+		  {
+			"index":  0,
+			"id":	  "P1",
+			"name":   "B♭ Trumpet",
+			"voices": [1],			# sorted list of voice numbers found
+		  },
+		  …
+		]
+ 
+	Use this to build a part-selector dropdown before calling
+	parse_musicxml_chords(path, part_index=N, voice=V).
+	"""
+	doc = MusicXMLDocument(xml_path, parse=True)
+	result = []
+ 
+	for idx, part in enumerate(doc.parts):
+		voices_seen = set()
+		for measure in part.measures:
+			for note in measure.notes:
+				try:
+					voices_seen.add(int(note.voice))
+				except (TypeError, ValueError, AttributeError):
+					voices_seen.add(1)
+ 
+		# Try to get the human-readable part name from the XML
+		part_id   = getattr(part, 'id', str(idx))
+		part_name = getattr(part, 'part_name', None) or part_id
+ 
+		result.append({
+			"index":  idx,
+			"id":	  part_id,
+			"name":   part_name,
+			"voices": sorted(voices_seen),
+		})
+ 
+	return result

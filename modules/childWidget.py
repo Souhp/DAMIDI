@@ -13,6 +13,7 @@ class ChildWidget:
 
 		self.screen:  pygame.Surface	   | None = None
 		self.manager: object			   | None = None
+		self.parentWidget = None
 		self.ui:	  pygame_gui.UIManager | None = None
 
 		self._tasks: list = []	 # concurrent.futures.Future

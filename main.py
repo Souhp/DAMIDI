@@ -3,6 +3,15 @@ import pygame
 import pygame_gui
 from sceneManager import SceneManager
 
+from pygame_gui.elements.ui_button import UIButton
+_orig_button_init = UIButton.__init__
+
+def _patched_button_init(self, *args, **kwargs):
+    _orig_button_init(self, *args, **kwargs)
+    if not hasattr(self, 'held'):
+        self.held = False
+
+UIButton.__init__ = _patched_button_init
 
 def main():
 	pygame.init()
@@ -26,7 +35,7 @@ def main():
 
 	running = True
 	while running:
-		dt = clock.tick(120) / 1000.0
+		dt = clock.tick(60) / 1000.0
 
 		for event in pygame.event.get():
 			if event.type == pygame.QUIT:

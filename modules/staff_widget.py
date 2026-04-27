@@ -16,12 +16,37 @@ import pygame_gui
 from modules.childWidget import ChildWidget
 from time import monotonic
 import logging
+from modules.mxmlParser import get_parts_info
+from time import sleep
 
 _VISIBLE_16 = {6, 8, 10, 12, 14}
 _VISIBLE_32 = {6, 8, 10, 12, 14, 18, 20, 22, 24, 26}
 _MAX_CHUNK_W = 8000
 
 _MEDIA_BAR_H_BASE = 44	 # design-space pixels, will be scaled
+
+# Maps MusicXML note-type strings to pygame_shape_constructor type strings.
+_REST_TYPE_MAP: dict[str, str] = {
+	"maxima":  "double_whole_rest",
+	"long":    "double_whole_rest",
+	"breve":   "double_whole_rest",
+	"whole":   "whole_rest",
+	"half":    "half_rest",
+	"quarter": "quarter_rest",
+	"eighth":  "eighth_rest",
+	"16th":    "16th_rest",
+	"32nd":    "32nd_rest",
+	"64th":    "32nd_rest",   # visually collapse anything shorter to 32nd
+	"128th":   "32nd_rest",
+}
+
+_SWING_RATIOS: dict[str, float] = {
+    "Light (6:5)":   1.2,
+    "Medium (3:2)":  1.5,
+    "Shuffle (2:1)": 2.0,
+    "Hard (3:1)":    3.0,
+}
+_SWING_DEFAULT = "Shuffle (2:1)"
 
 class StaffWidget(ChildWidget):
 
@@ -33,7 +58,7 @@ class StaffWidget(ChildWidget):
 			"_paused_remaining",
 		)
 
-		def __init__(self, duration_seconds, scale=0.2):
+		def __init__(self, duration_seconds, scale=1):
 			self.duration = float(duration_seconds)
 			self.time_scale = float(scale)
 			self.end_time = None
@@ -70,13 +95,28 @@ class StaffWidget(ChildWidget):
 
 		def resume(self):
 			if self._paused_remaining is not None:
-				self.end_time = monotonic() + self._paused_remaining / self.time_scale	# was: no division
+				self.end_time = monotonic() + self._paused_remaining / self.time_scale
 				self._paused_remaining = None
 
 		def skip(self, seconds):
-			if not self.running():
-				return
-			self.end_time -= seconds / self.time_scale	# was: no division
+			if self.running():
+				# Compute remaining time first
+				remaining = self.end_time - self.now()
+
+				# Apply skip
+				remaining -= seconds
+
+				# Clamp
+				remaining = max(0, min(self.duration, remaining))
+
+				# Rebuild end_time from clamped remaining
+				self.end_time = self.now() + remaining
+
+			elif self._paused_remaining is not None:
+				new_time = self._paused_remaining - seconds
+
+				# Clamp (same logic)
+				self._paused_remaining = max(0, min(self.duration, new_time))
 
 		def set_scale(self, scale):
 			if scale <= 0:
@@ -101,7 +141,7 @@ class StaffWidget(ChildWidget):
 			if self.running():
 				if now is None:
 					now = monotonic()
-				return max(0.0, (self.end_time - now) * self.time_scale)  # was: end_time - now
+				return max(0.0, (self.end_time - now) * self.time_scale)
 			elif self._paused_remaining is not None:
 				return self._paused_remaining
 			return self.duration
@@ -138,6 +178,7 @@ class StaffWidget(ChildWidget):
 		self.dumb_staffEvent = None
 		self.user_note_shapes=[]
 		self.changedBuffer=False
+		self.refreshPass=False#used to make the update go again but just once before hopefully getting flipped
 		
 		if showBass:
 			self.note_range = [2, 6]
@@ -156,6 +197,7 @@ class StaffWidget(ChildWidget):
 		self._pixels_per_second	= 75
 		self.midiCache=None
 		self.noteMatchMode=0
+		self.noteMatchModeStr="Real Time Scroll"
 		self.changedScrollMode=False
 		# CHANGE 1: note_spacing_scale decouples visual spacing from scroll speed.
 		# Increase to spread notes further apart without changing how fast they scroll.
@@ -167,29 +209,34 @@ class StaffWidget(ChildWidget):
 		self.staff_timer = None
 		self.scrolling_events_to_spawn=[]
 		self.overlayEventIndex=0
-
+		self.xmlFilePath=None
 		
 		#for proper note time
 		self._bpm = 120
 
 
-		#for snap cannvas
+		#for snap canvas
 		self.snap_index=0
 		self._per_press_prev_pitches: set = set()
 		self._prev_note_count: int = 0          # how many notes were held last frame
 		self._chord_was_shrinking: bool = False  # True once notes start being released
 
 		# ── Proper Staff Time (case 1) state ─────────────────────────────────
-		# Elapsed PT seconds since playback started (or was reset).
 		self._pt_elapsed: float = 0.0
-		# _pt_map: list of dicts built by _build_pt_map().
-		#   Each entry covers one chord:
-		#     pt_time   – cumulative PT seconds when this chord should hit the line
-		#     scroll_x  – _scroll_x value that places this chord at default_note_position
-		#     hold_sec  – how long (PT seconds) this chord occupies before the next
-		# scroll_x is interpolated between consecutive entries over hold_sec seconds,
-		# producing variable-speed scrolling on the unchanged scrollingCanvas.
 		self._pt_map: list = []
+		self._swing_enabled     = False
+		self._swing_ratio_label = _SWING_DEFAULT
+		self._swing_ratio       = _SWING_RATIOS[_SWING_DEFAULT]
+		
+
+		# ── part / voice state ─────────────────────────────────────────────────
+		self._part_index:  int  = 0          # 0-based index into doc.parts
+		
+		self._voice: int | None = None   # None = all voices
+		self._parts_info:  list = []         # populated on first score load
+		self._selected_part_indices: list[int] = [] 
+		self._beats_per_bar: int = 4         # updated from time signatures
+
 
 		self.canvas_width:	int = 0
 		self.canvas_height: int = 0
@@ -199,12 +246,18 @@ class StaffWidget(ChildWidget):
 		self.logger.setLevel(logging.DEBUG)
 
 		if not self.logger.handlers:  # avoid duplicate handlers
-			handler = logging.FileHandler("debug.log", mode="w")  # 🔥 overwrite
+			handler = logging.FileHandler("debug.log", mode="w")
 			formatter = logging.Formatter(
 				"%(asctime)s [%(levelname)s] %(message)s"
 			)
 			handler.setFormatter(formatter)
 			self.logger.addHandler(handler)
+
+
+
+
+
+
 	# CHANGE 2: single property so every consumer is guaranteed to agree.
 	@property
 	def layout_pps(self) -> float:
@@ -212,9 +265,6 @@ class StaffWidget(ChildWidget):
 		return self.pixels_per_second * self.note_spacing_scale
 
 	# ── bpm property ──────────────────────────────────────────────────────────
-	# Changing BPM only affects hold_sec values in _pt_map (how long the scroll
-	# spends on each chord).  The scrollingCanvas positions are untouched because
-	# they are derived from start_sec × layout_pps, which is independent of BPM.
 	@property
 	def bpm(self) -> float:
 		return self._bpm
@@ -224,13 +274,10 @@ class StaffWidget(ChildWidget):
 		self._bpm = float(value)
 		if self.dumb_staffEvent:
 			print("resetting pt map")
-			self._build_pt_map()    # rebuild timing map only; canvas stays valid
-			self._reset_pt_state()  # reset elapsed so we don't land mid-map with wrong segments
+			self._build_pt_map()
+			self._reset_pt_state()
 
 	# ── pixels_per_second property ────────────────────────────────────────────
-	# Changing PPS alters layout_pps, which changes BOTH where notes are baked on
-	# scrollingCanvas AND the scroll_x_target values in _pt_map.  Both must be
-	# rebuilt together or they go out of sync.
 	@property
 	def pixels_per_second(self) -> float:
 		return self._pixels_per_second
@@ -239,7 +286,6 @@ class StaffWidget(ChildWidget):
 	def pixels_per_second(self, value: float):
 		self._pixels_per_second = float(value)
 		if self.dumb_staffEvent:
-			# Full rebuild: canvas positions and map targets both depend on layout_pps.
 			mode = (
 				"addMediaBar"
 				if self.staffEvent and self.noteMatchMode != 2
@@ -264,7 +310,7 @@ class StaffWidget(ChildWidget):
 			self.injected_note_staff_division or 7.5
 		)
 		self.look_ahead_sec = self.compute_lookahead_seconds(
-				self.canvas_width, self.layout_pps	# CHANGE 3a: use layout_pps
+				self.canvas_width, self.layout_pps
 			)
 
 		self.hit_time_offset = (self.canvas_width - self.default_note_position) / self.layout_pps
@@ -276,7 +322,7 @@ class StaffWidget(ChildWidget):
 
 		totalHeight = self._rect.height
 
-		if self.staffEvent and self.noteMatchMode!=2:			   # ← was: if self.dumb_staffEvent
+		if self.staffEvent and self.noteMatchMode!=2:
 			media_bar_h = int(_MEDIA_BAR_H_BASE * (totalHeight / 600))
 			self.media_bar_height = max(32, min(media_bar_h, 900))
 		else:
@@ -287,8 +333,6 @@ class StaffWidget(ChildWidget):
 		self.canvas_height = self._rect.height - self.media_bar_height
 		self._canvas = pygame.Surface((self.canvas_width, self.canvas_height), pygame.SRCALPHA)
 		self._press_canvas = pygame.Surface((self.canvas_width, self.canvas_height), pygame.SRCALPHA)
-
-	
 
 
 	def scrollingStaffSetup(self):
@@ -331,6 +375,13 @@ class StaffWidget(ChildWidget):
 					shapes_by_chunk[chunk_idx].extend(event['flat_shapes'])
 					if near_boundary:
 						shapes_by_chunk[chunk_idx + 1].extend(event['flat_shapes'])
+				elif event_type == "rest":
+					for shape in event['flat_shapes']:
+						shape.shift_x(shift)
+					shapes_by_chunk[chunk_idx].extend(event['flat_shapes'])
+					if near_boundary:
+						shapes_by_chunk[chunk_idx + 1].extend(event['flat_shapes'])
+
 		num_chunks = max(1, (int(total_scroll_width) + _MAX_CHUNK_W - 1) // _MAX_CHUNK_W)
 		self._scroll_chunks: list[pygame.Surface] = []
 
@@ -372,16 +423,56 @@ class StaffWidget(ChildWidget):
 			group=self.staffElementGroup
 		)
 		btn_h = self.media_bar_height - 8
+		x = 4  # starting position
+		gap = 4
+		btn_w = 80
+
+		# Play button
 		self._play_btn = self._add(pygame_gui.elements.UIButton(
-			relative_rect=pygame.Rect(4, 4, 80, btn_h),
+			relative_rect=pygame.Rect(x, 4, btn_w, btn_h),
 			text="▶ Play",
 			manager=self.ui,
 			container=self._media_panel,
 			),
-		
 			group=self.staffElementGroup
 		)
 		self.on_event(pygame_gui.UI_BUTTON_PRESSED, self._on_play_btn, element=self._play_btn,group=self.staffElementGroup)
+
+		x += btn_w + gap  # move to next slot
+	
+		self._skip_back_btn = self._add(pygame_gui.elements.UIButton(
+			relative_rect=pygame.Rect(x, 4, btn_w, btn_h),
+			text="<<--",
+			manager=self.ui,
+			container=self._media_panel,
+			),
+			group=self.staffElementGroup
+		)
+		self.on_event(pygame_gui.UI_BUTTON_PRESSED, self.on_skip_backward_btn, element=self._skip_back_btn,group=self.staffElementGroup)
+		x += btn_w + gap  # move to next slot
+		self._skip_forward_btn = self._add(pygame_gui.elements.UIButton(
+			relative_rect=pygame.Rect(x, 4, btn_w, btn_h),
+			text="-->>",
+			manager=self.ui,
+			container=self._media_panel,
+			),
+			group=self.staffElementGroup
+		)
+
+		self.on_event(pygame_gui.UI_BUTTON_PRESSED, self.on_skip_forward_btn, element=self._skip_forward_btn,group=self.staffElementGroup)
+		x += btn_w + gap  # move to next slot
+		self._reset_score_btn = self._add(pygame_gui.elements.UIButton(
+			relative_rect=pygame.Rect(x, 4, btn_w, btn_h),
+			text="Restart",
+			manager=self.ui,
+			container=self._media_panel,
+			),
+			group=self.staffElementGroup
+		)
+		self.on_event(pygame_gui.UI_BUTTON_PRESSED, self.on_restart_btn, element=self._reset_score_btn,group=self.staffElementGroup)
+
+
+
 
 	def _build_debug_overlay(self):
 
@@ -393,9 +484,6 @@ class StaffWidget(ChildWidget):
 
 		self._debug_overlay = pygame.Surface((self.canvas_width, self.canvas_height), pygame.SRCALPHA)
 		self._debug_font = pygame.font.SysFont("monospace", 14)
-
-		#pygame.draw.line(self._debug_overlay, (255, 255, 255, 255),
-		#				(int(hit_x), 0), (int(hit_x), self.canvas_height), 2)
 
 		band_surf = pygame.Surface((int(press_window_px * 2), self.canvas_height), pygame.SRCALPHA)
 		band_surf.fill((0, 255, 0, 100))
@@ -410,7 +498,6 @@ class StaffWidget(ChildWidget):
 
 	def buildCanvasElements(self,*args,**kwargs):
 
-		
 		mode=args[0]
 		
 		match mode:
@@ -420,7 +507,7 @@ class StaffWidget(ChildWidget):
 				self.clear()
 				self.overlayStaffSetup()
 				self.precompute_sizes()
-				if self.staffEvent:			   # ← guard both together
+				if self.staffEvent:
 					self.mediaBarSetup()
 					self.dumb_staffEvent = self.create_dumb_events(self.staffEvent[0])
 					self._build_pt_map()
@@ -433,7 +520,7 @@ class StaffWidget(ChildWidget):
 				self.clear()
 				self.overlayStaffSetup()
 				self.precompute_sizes()
-				if self.staffEvent:			   # ← guard both together
+				if self.staffEvent:
 					self.dumb_staffEvent = self.create_dumb_events(self.staffEvent[0])
 					self._build_pt_map()
 					self.staff_timer.play()
@@ -464,7 +551,82 @@ class StaffWidget(ChildWidget):
 			self.staff_timer.play()
 			self._play_btn.set_text("⏸ Pause")
 
+	def on_skip_forward_btn(self, event):
+		if not self.staff_timer:
+			return
 
+
+		if self.noteMatchMode==2:
+			self.snap_index +=1
+
+			while (
+				self.snap_index < len(self.dumb_staffevent)
+				and self.dumb_staffevent[self.snap_index].get("type") != "chord"
+			):
+				self.snap_index += 1
+			self.refreshPass=True
+			
+		else:
+
+			playing=False
+			if self.staff_timer.running():
+				playing=True
+			self.staff_timer.pause()
+			self.overlayEventIndex=0
+			self.staff_timer.skip(5)
+			if not playing:
+				self.staff_timer.pause()
+				self.refreshPass=True
+			else:
+				self.staff_timer.play()
+
+
+
+	def on_skip_backward_btn(self, event):
+		if not self.staff_timer:
+			return
+
+
+		if self.noteMatchMode==2:
+			self.snap_index -=1
+
+			while (
+				self.snap_index > 0
+				and self.dumb_staffevent[self.snap_index].get("type") != "chord"
+			):
+				self.snap_index -= 1
+			self.refreshPass=True
+			
+		else:
+
+			playing=False
+			if self.staff_timer.running():
+				playing=True
+			self.staff_timer.pause()
+			self.overlayEventIndex=0
+			self.staff_timer.skip(-5)
+			if not playing:
+				self.staff_timer.pause()
+				self.refreshPass=True
+			else:
+				self.staff_timer.play()
+	
+	def on_restart_btn(self,event):
+		if self.staff_timer is None:
+			return
+		playing=False
+		if self.staff_timer.running():
+			playing=True
+			self.staff_timer.pause()
+		self.overlayEventIndex=0
+		self.snap_index      = 0
+		self.staff_timer.restart(self)
+		self._reset_pt_state()
+		self.staff_timer.play()
+		if not playing:
+			time.sleep(0.05)
+			self.staff_timer.pause()
+	
 	def set_note_dic(self):
 		note_names = ['C', 'D', 'E', 'F', 'G', 'A', 'B']
 		if self.showBass:
@@ -481,6 +643,30 @@ class StaffWidget(ChildWidget):
 
 		for i, x in self.note_dic.items():
 			print(f"key:{i},   item{x}:")
+
+
+	def _get_rest_y(self, note_type: str) -> float:
+		"""
+		Return the pixel-y for a rest symbol of the given MusicXML note_type.
+
+		Standard engraving positions (treble clef):
+		  whole  → hangs from D5 (4th line from bottom); shape_y = top of rect
+		  half   → sits on B4  (3rd line = middle);      shape_y = bottom of rect
+		  others → centred on B4 (middle of staff)
+
+		Works for bass+treble layouts too because note_dic maps the same
+		note names to the correct line indices in either configuration.
+		"""
+		if note_type in ('whole', 'double_whole', 'breve', 'long', 'maxima'):
+			lookup = 'D5'
+		elif note_type == 'half':
+			lookup = 'B4'
+		else:
+			lookup = 'B4'
+
+		if lookup in self.note_dic:
+			return self.line_y(self.note_dic[lookup])
+		return self.canvas_height / 2.0
 
 
 	def assign_positions(self, row, index, prev_positions=None, width=5, accidentals_list=None):
@@ -634,7 +820,7 @@ class StaffWidget(ChildWidget):
 			if last_played_index - 1 == index:
 				final_position = position + (note_width * 0.8)
 				jumped = True
-			elif last_played_index == index:  # ← restore this guard
+			elif last_played_index == index:
 				final_position = position + note_width
 				jumped = True
 		else:
@@ -669,7 +855,6 @@ class StaffWidget(ChildWidget):
 				else:
 					t_list.append(t_accidental)
 				accidentals[index] = t_list
-			# ← both octave-migration for-loops removed entirely
 		else:
 			if index in accidentals:
 				t_list = accidentals[index]
@@ -724,6 +909,7 @@ class StaffWidget(ChildWidget):
 		else:
 			return return_list
 
+
 	def create_dumb_events(self, events):
 		dumb_events			= []
 		global_note_counter = 0
@@ -732,6 +918,7 @@ class StaffWidget(ChildWidget):
 		for index, i in enumerate(events):
 			event_type = i.get("type")
 
+			# ── bar ──────────────────────────────────────────────────────────
 			if event_type == "bar":
 				bar_start_sec = i.get('start_sec')
 				if last_playable_shape is not None:
@@ -751,12 +938,13 @@ class StaffWidget(ChildWidget):
 					"type"	   : event_type,
 					"shapes"   : bar_shapes,
 					"start_sec": bar_start_sec,
-					"color"		 : None
+					"color"	   : None
 				})
 
+			# ── chord ─────────────────────────────────────────────────────────
 			elif event_type == "chord":
 				pl				  = []
-				beatFracList = []
+				beatFracList      = []
 				notes			  = i.get("notes", [])
 				accidentals_list  = {}
 				jumped			  = False
@@ -770,7 +958,7 @@ class StaffWidget(ChildWidget):
 
 				for pl_index, note in enumerate(notes, start=1):
 					global_note_counter += 1
-					pitch = note.get('display_pitch', note.get('pitch'))
+					pitch        = note.get('display_pitch', note.get('pitch'))
 					tscale_note  = str(self.manager.midi_to_scale_note(pitch))
 					note_name	 = tscale_note[0]
 					note_octave  = tscale_note[-1]
@@ -779,7 +967,8 @@ class StaffWidget(ChildWidget):
 						if ch in ('#', 'b'):
 							new_scale_note += ch
 						else:
-							break  # hit the octave number (or '-'), stop
+							break
+
 					#scales like F# will have C## so to not have c,c#,c## we make c to b#.
 					#but my systems is crude and does not work like that. it just takes in an index and note
 					#so I have to switch it back for this function to let the staff know that this is the first appeance of B and not the last B in the scale
@@ -811,15 +1000,49 @@ class StaffWidget(ChildWidget):
 				flat += [s for acc in make_accidentals_result for s in acc[0]]
 
 				dumb_events.append({
-					"type"		 : event_type,
-					"shapes"	 : [note_shapes_list, make_accidentals_result],
-					"flat_shapes": flat,
-					"start_sec"  : i.get('start_sec'),
-					"pitch_list" : pl,
-					"typeList"	: beatFracList,
+					"type"		  : event_type,
+					"shapes"	  : [note_shapes_list, make_accidentals_result],
+					"flat_shapes" : flat,
+					"start_sec"   : i.get('start_sec'),
+					"pitch_list"  : pl,
+					"typeList"	  : beatFracList,
 					"min_fraction": i.get('min_fraction', Fraction(1, 4)),
-					"color"		 : None,
+					"color"		  : None,
 					"sound_played": False
+				})
+				last_playable_shape = i
+
+			# ── rest ──────────────────────────────────────────────────────────
+			elif event_type == "rest":
+				xml_note_type  = i.get("note_type", "quarter")
+				shape_type_str = _REST_TYPE_MAP.get(xml_note_type, "quarter_rest")
+				dotted         = i.get("dots", 0) > 0
+
+				rest_y = self._get_rest_y(xml_note_type)
+
+				rest_shapes = pygame_shape_constructor(
+					shape_x      = self.default_note_position,
+					shape_y      = rest_y,
+					shape_width  = self.note_width,
+					shape_height = self.note_height,
+					type         = shape_type_str,
+					dotted       = dotted,
+				)
+
+				if rest_shapes is None:
+					continue
+
+				# flat_shapes: one flat list of PygameShape objects, same
+				# structure as chord events so scrolling / edit_shape work.
+				flat = [s for shape_list, _ in rest_shapes for s in shape_list]
+
+				dumb_events.append({
+					"type"        : "rest",
+					"shapes"      : rest_shapes,   # [(shape_list, type_str), …]
+					"flat_shapes" : flat,
+					"start_sec"   : i.get("start_sec"),
+					"min_fraction": i.get("min_fraction", Fraction(1, 4)),
+					"color"       : None,
 				})
 				last_playable_shape = i
 
@@ -856,6 +1079,12 @@ class StaffWidget(ChildWidget):
 					shape_list, _ = shape_group
 					for shape in shape_list:
 						self._shift_drawable_x(shape, dx)
+			return
+
+		# Rests scroll just like chords but are never recoloured for MIDI matching.
+		if event_type == "rest":
+			for shape in shape_to_resize.get("flat_shapes", []):
+				self._shift_drawable_x(shape, dx)
 			return
 
 		if event_type != "chord":
@@ -929,7 +1158,6 @@ class StaffWidget(ChildWidget):
 
 		while i < n:
 			event = events[i]
-			#what a shitty language I hate this place
 			chosenColor = event["color"] if event["color"] else color
 			start = event.get("start_sec")
 			if start is None:
@@ -938,7 +1166,7 @@ class StaffWidget(ChildWidget):
 
 			start = float(start)
 
-			if current_time > start + backward_window_sec:	 # ← was hardcoded 1.6
+			if current_time > start + backward_window_sec:
 				commit_i = i + 1
 				i += 1
 				continue
@@ -1060,7 +1288,25 @@ class StaffWidget(ChildWidget):
 		self._pt_elapsed       = 0.0
 		self.overlayEventIndex = 0
 
+	def reParseXml(self):
+		"""Re-parse the current file with the updated part selection."""
+		from modules.mxmlParser import parse_musicxml_chords, get_parts_info   # ← add get_parts_info
+		self.staffEvent = parse_musicxml_chords(
+			self.xmlFilePath, part_index=self._part_index, voice=None
+		)
+		self.staff_timer = self.Timer(self.staffEvent[1])
+		self.dumb_staffEvent = None
+		self.snap_index      = 0
+		self._reset_pt_state()
+		self._parts_info = get_parts_info(self.xmlFilePath)                      # ← ADD THIS
+	
+		if self.noteMatchMode != 2:
+			self.mutate_group(self.staffElementGroup, "addMediaBar")
+		else:
+			self.mutate_group(self.staffElementGroup, "removeMediaBar")
+
 	def changeScrollMode(self,selected: str):
+		self.noteMatchModeStr=selected
 		match selected:
 			case "Real Time Scroll":
 				self.noteMatchMode=0
@@ -1073,23 +1319,128 @@ class StaffWidget(ChildWidget):
 			case "None":
 				self.noteMatchMode=3
 		self.changedScrollMode=True
+		self.manager.current.rebuild_sidebar()
 
 		
 
 	def sidebar_options(self):
-		return [
+		
+
+
+		options = []
+		options.append(
 			{
 				"type": "dropdown",
 				"label": "Note Match Mode",
 				"options": ["Real Time Scroll", "Proper Staff Time", "Per Press","None"],
-				"on_change": self.changeScrollMode
-			},
+				"on_change": self.changeScrollMode,
+				"defaultOption":self.noteMatchModeStr
+			})
+		options.append(
+
 			{
 				"type": "button",
 				"label": "open Music XML File",
 				"callback": self._open_file_dialog
 			}
-		]
+		)
+
+		#swing_label = f"Swing: {'ON ✓' if self._swing_enabled else 'OFF'}"
+	
+		#def _toggle_swing(self=self):
+		#	self._swing_enabled = not self._swing_enabled
+		#	self._build_pt_map()          # rebuild timing map immediately
+		#	self._rebuild_sidebar()       # refresh label ON ↔ OFF
+	
+		#options.append({
+		#	"type":     "button",
+		#	"label":    swing_label,
+		#	"callback": _toggle_swing,
+		#})
+		if self.xmlFilePath:
+
+			def changeScoreVoice(states: dict):
+				new_selected = [
+					info['index']
+					for info in self._parts_info
+					if states.get(f"{info['index']}: {info['name']}", False)
+				]
+
+				if not new_selected:
+
+					return
+
+				# Detect which part was just added vs already selected
+				newly_added = [i for i in new_selected if i not in self._selected_part_indices]
+				
+				if newly_added:
+					self._part_index = newly_added[0]   # use the one just checked
+				elif new_selected:
+					self._part_index = new_selected[0]  # fallback if nothing new
+
+				self._selected_part_indices = new_selected
+
+				if self.xmlFilePath:
+					self.reParseXml()
+
+				self.manager.current.rebuild_sidebar()
+
+
+			infos = [f"{i['index']}: {i['name']}" for i in get_parts_info(self.xmlFilePath)]
+
+			options.append(
+				{
+				"type": "checkbox_list",
+				"label": "Score Voice",
+				"options": infos,
+				"default": [True],
+				"on_change": changeScoreVoice
+				}
+			)
+
+
+		#note match mode specific options
+		options.append({
+			"type":      "label",
+			"text":     (f"Scroll/NoteMatch Settings"),
+		})
+
+
+		if self.noteMatchMode!=3:
+			if self.noteMatchMode!=1:#proper
+				pass	
+				#speed
+
+			else:
+			
+				#bpm
+
+
+
+				# ── Swing ratio dropdown ──────────────────────────────────────────────
+				ratio_labels = list(_SWING_RATIOS.keys())
+				# Rotate so the current selection appears first (UIDropDownMenu shows [0]).
+				if self._swing_ratio_label in ratio_labels:
+					idx = ratio_labels.index(self._swing_ratio_label)
+					ratio_labels = ratio_labels[idx:] + ratio_labels[:idx]
+			
+				def _on_ratio(label: str, self=self):
+					if label in _SWING_RATIOS:
+						self._swing_ratio_label = label
+						self._swing_ratio       = _SWING_RATIOS[label]
+					if self._swing_enabled:
+						self._build_pt_map()      # recompute immediately if already on
+			
+				options.append({
+					"type":      "dropdown",
+					"label":     "Swing ratio",
+					"options":   ratio_labels,
+					"on_change": _on_ratio,
+				})
+
+
+
+		return options
 
 	def _open_file_dialog(self):
 		if self._file_dialog is not None:
@@ -1104,31 +1455,35 @@ class StaffWidget(ChildWidget):
 		self.on_event(pygame_gui.UI_WINDOW_CLOSE,			 self._on_dialog_close, element=self._file_dialog)
 
 	def _on_path_picked(self, event):
-		self.run_task(self._load_xml(event.text))
+		self._load_xml(event.text)
 		self._file_dialog = None
+		self.xmlFilePath=event.text
+		self.manager.current.rebuild_sidebar()
 
 	def _on_dialog_close(self, event):
 		self._file_dialog = None
 
-	async def _load_xml(self, path):
+	def _load_xml(self, path):
 		from modules.mxmlParser import parse_musicxml_chords
-		self.staffEvent = parse_musicxml_chords(path)
+		self.staffEvent = parse_musicxml_chords(path, part_index=self._part_index, voice=None)
 		self.staff_timer = self.Timer(self.staffEvent[1])
 		self.dumb_staffEvent = None
-		self.snap_index = 0  # ← reset so first press shows note 1
-		self._reset_pt_state()   # ← reset Proper Staff Time to chord 0
-
+		self.snap_index = 0
+		self._reset_pt_state()
+		self._parts_info = get_parts_info(path)
+		self._selected_part_indices = [self._part_index]  # track initial selection
 		if self.noteMatchMode != 2:
 			self.mutate_group(self.staffElementGroup, "addMediaBar")
 		else:
 			self.mutate_group(self.staffElementGroup, "removeMediaBar")
-			# Don't call snap here — let the first keypress trigger it naturally
+
+
 
 	def on_non_generic_pygame_event(self, event):
 		pass
 
 
-			
+		
 	#note matching modules
 
 
@@ -1183,6 +1538,11 @@ class StaffWidget(ChildWidget):
 						else:
 							self.current_allowed_pressed_midi[pitch] = (trueTime, False)
 
+
+					
+					#scales like F# will have C## so to not have c,c#,c## we make c to b#.
+					#but my systems is crude and does not work like that. it just takes in an index and note
+					#so I have to switch it back for this function to let the staff know that this is the first appeance of B and not the last B in the scale
 					if new_scale_note == "B#":
 						index = self.note_dic[str(note_name + str(int(note_octave) - 1))]
 					else:
@@ -1190,7 +1550,7 @@ class StaffWidget(ChildWidget):
 
 					note_result, accidentals, jumped, last_played_index, current_position = self.make_note(
 						pl_count,
-						position=None,          # ← tracks offset across notes
+						position=None,
 						index=index,
 						accidentals_list=accidentals,
 						new_scale_note=new_scale_note,
@@ -1223,91 +1583,89 @@ class StaffWidget(ChildWidget):
 
 	def _build_pt_map(self):
 		"""
-		Build self._pt_map from dumb_staffEvent using BPM + time signature + note fractions.
-
-		For each chord:
-		  hold_sec  = float(min_fraction) × time_sig_denominator × (60 / bpm)
-
-		  Example – 4/4 @ 120 bpm, quarter note  (Fraction 1/4):
-		    hold_sec = (1/4) × 4 × 0.5 = 0.5 s
-
-		  Example – 6/8 @ 60 bpm, dotted-quarter  (Fraction 3/8):
-		    hold_sec = (3/8) × 8 × 1.0 = 3.0 s
-
-		scroll_x_target = -(start_sec × layout_pps)
-		  This is the _scroll_x value that places the chord exactly at
-		  default_note_position on screen (canvas_x + scroll_x = default_note_position).
-		  scrollingCanvas is never touched; only the scroll offset changes.
-
-		pt_time is stored directly on each dumb_staffEvent chord dict so that
-		_draw_press_window_pt can compare it against _pt_elapsed.
-
-		Also stores scroll_x on bar events so they scroll correctly too.
+		Build self._pt_map from dumb_staffEvent.
+	
+		When swing is enabled, eighth-note hold_sec values are split unevenly:
+			on-beat  eighth  →  beat_sec × ratio / (ratio + 1)   [long]
+			off-beat eighth  →  beat_sec × 1     / (ratio + 1)   [short]
+	
+		All other note values (quarter, half, whole …) are unaffected.
+		Visual scroll positions (scroll_x_target) are never touched.
 		"""
 		if not self.dumb_staffEvent:
 			self._pt_map = []
 			return
-
-		# Resolve time-signature denominator from parsed doc (staffEvent[2]).
+	
+		# ── time-signature denominator ────────────────────────────────────────
 		time_sig_denom = 4
 		if self.staffEvent and len(self.staffEvent) > 2:
 			sigs = self.staffEvent[2]
 			if sigs:
 				time_sig_denom = sigs[0].denominator
-
-		beat_sec = 60.0 / max(self.bpm, 1)
+	
+		beat_sec    = 60.0 / max(self.bpm, 1)
+		eighth_dur  = beat_sec / 2.0          # duration of a straight eighth note
+		tol         = eighth_dur * 0.20       # ±20 % tolerance for beat-grid snapping
+	
+		swing_on    = getattr(self, '_swing_enabled',     False)
+		ratio       = getattr(self, '_swing_ratio',       2.0)
+	
 		pt_time  = 0.0
 		pt_map   = []
-
-		# We need bar events in the map too so they scroll smoothly between chords.
-		# Strategy: iterate all events; for bars, interpolate their pt_time linearly
-		# between the surrounding chords based on their start_sec ratio.
-		# Simpler: just assign them the pt_time of the next chord they precede.
-		# We do two passes – first build chord entries, then slot bars in between.
-
-		chord_entries = []   # (dumb_event_index, pt_time_at_chord, scroll_x_target)
-
+	
 		for ev in self.dumb_staffEvent:
-			if ev['type'] != 'chord':
+			if ev['type'] not in ('chord', 'rest'):
 				continue
-
-			start_sec      = float(ev.get('start_sec') or 0.0)
+	
+			start_sec       = float(ev.get('start_sec') or 0.0)
 			scroll_x_target = -(start_sec * self.layout_pps)
 			min_frac        = ev.get('min_fraction', Fraction(1, 4))
-			hold_sec        = float(min_frac) * time_sig_denom * beat_sec
-
-			# Tag the event so _draw_press_window_pt can use it without a dict lookup.
-			ev['pt_time']      = pt_time
-			ev['pt_scroll_x']  = scroll_x_target
-
-			chord_entries.append({
-				'pt_time'  : pt_time,
-				'scroll_x' : scroll_x_target,
-				'hold_sec' : hold_sec,
+	
+			# ── compute hold_sec, applying swing only to eighth notes ─────────
+			if swing_on and min_frac == Fraction(1, 8):
+				# Position within the current quarter-note beat (0 … beat_sec).
+				pos_in_beat = start_sec % beat_sec
+	
+				if abs(pos_in_beat - eighth_dur) < tol:
+					# Off-beat ("and") eighth — compressed
+					hold_sec = beat_sec / (ratio + 1.0)
+				else:
+					# On-beat ("down") eighth — stretched
+					hold_sec = beat_sec * ratio / (ratio + 1.0)
+			else:
+				hold_sec = float(min_frac) * time_sig_denom * beat_sec
+	
+			ev['pt_time']     = pt_time
+			ev['pt_scroll_x'] = scroll_x_target
+	
+			pt_map.append({
+				'pt_time' : pt_time,
+				'scroll_x': scroll_x_target,
+				'hold_sec': hold_sec,
 			})
 			pt_time += hold_sec
-
-		# Tag bar events with the pt_time + scroll_x of the nearest preceding chord.
-		last_pt_time   = 0.0
-		last_scroll_x  = 0.0
+	
+		# ── tag bar events with the nearest preceding chord/rest timing ───────
+		last_pt_time  = 0.0
+		last_scroll_x = 0.0
 		for ev in self.dumb_staffEvent:
-			if ev['type'] == 'chord':
+			if ev['type'] in ('chord', 'rest'):
 				last_pt_time  = ev['pt_time']
 				last_scroll_x = ev['pt_scroll_x']
 			elif ev['type'] == 'bar':
 				ev['pt_time']     = last_pt_time
 				ev['pt_scroll_x'] = last_scroll_x
+	
+		self._pt_map = pt_map
 
-		self._pt_map = chord_entries
 
+
+
+ 
 	def _draw_press_window_pt(self, trueTime: float):
 		"""
 		Draw the green press-window highlight for Proper Staff Time mode.
-
-		Identical in purpose to _draw_press_window, but uses event['pt_time']
-		(BPM-computed) instead of event['start_sec'] (wall-clock).  Shapes are
-		temporarily shifted to their current screen position using _scroll_x and
-		then restored – scrollingCanvas bitmaps are never modified.
+		Rests are skipped — only chords get the green overlay.
 		"""
 		_GREEN = (0, 200, 0, 255)
 		self._press_canvas.fill((0, 0, 0, 0))
@@ -1330,23 +1688,20 @@ class StaffWidget(ChildWidget):
 					event["sound_played"]=False
 				break
 
-				# all later events are further in the future
 			if trueTime - pt_time > self.press_window_sec:
 				if event.get("sound_played"):
 					for i in event.get("pitch_list", []):
 						self.manager.midiAudioPlayer.note_off(i)
 					event["sound_played"] = False
-				continue                      # gate should have caught this; be safe
+				continue
 			
-			#play sound
 			if not event.get("sound_played",False):
 				for i in event.get("pitch_list"):
 					self.manager.midiAudioPlayer.note_on(i)
 				event["sound_played"]=True
-			
 
 			for shape in event.get('flat_shapes', []):
-				shape.shift_x(sx)             # → current screen position
+				shape.shift_x(sx)
 				if getattr(shape, '_is_fill_mask', False):
 					shape.draw(self._press_canvas)
 				else:
@@ -1354,30 +1709,12 @@ class StaffWidget(ChildWidget):
 					shape.color = _GREEN
 					shape.draw(self._press_canvas)
 					shape.color = old_color
-				shape.shift_x(-sx)            # exact undo
+				shape.shift_x(-sx)
 
 	def _draw_press_window(self, trueTime):
 		"""
 		Clear _press_canvas and re-draw only the notes inside the press window.
-
-		How it works
-		------------
-		scrollingCanvas has every note baked at (default_pos + start*layout_pps).
-		We can't recolour those pixels without a full redraw.  Instead:
-		  1. Clear this transparent overlay (cheap — one fill)
-		  2. For each chord in the press window:
-			   shift_x( +sx )   move shape to its current screen-x
-			   draw green copy  onto _press_canvas (the overlay)
-			   shift_x( -sx )   restore _dx so scrollingCanvas is untouched
-		  3. draw() blits the overlay on top of scrollingCanvas at fixed position
-
-		Gate
-		----
-		Uses overlayEventIndex (advanced in case 0 update loop) so we never scan
-		events that have already scrolled off the left edge.
-		staffEventIterGate belongs to per-press mode — NOT used here.
-
-		Cost: O(events_in_window) — typically 1-3 chords per frame.
+		Rests are skipped — only chords get the green overlay.
 		"""
 		_GREEN = (0, 200, 0, 255)
 		self._press_canvas.fill((0, 0, 0, 0))
@@ -1385,7 +1722,6 @@ class StaffWidget(ChildWidget):
 		if not self.dumb_staffEvent:
 			return
 
-		# Round once — shift_x stores int _dx; repeated float add/undo drifts.
 		sx = round(self._scroll_x)
 
 		for event in self.dumb_staffEvent[self.overlayEventIndex:]:
@@ -1395,7 +1731,6 @@ class StaffWidget(ChildWidget):
 			if start is None:
 				continue
 
-			# Events are time-sorted — past the window means all later ones are too.
 			if start - trueTime > self.press_window_sec:
 				if event.get("sound_played"):
 					for i in event.get("pitch_list"):
@@ -1403,7 +1738,6 @@ class StaffWidget(ChildWidget):
 					event["sound_played"]=False
 				break
 
-			# Before the window (gate should have caught this, but be safe)
 			if trueTime - start > self.press_window_sec:
 				if event.get("sound_played"):
 					for i in event.get("pitch_list", []):
@@ -1411,37 +1745,33 @@ class StaffWidget(ChildWidget):
 					event["sound_played"] = False
 				continue
 			
-			#play sound
 			if not event.get("sound_played",False):
 				for i in event.get("pitch_list"):
 					self.manager.midiAudioPlayer.note_on(i)
 				event["sound_played"]=True
 
-
-			#color
 			for shape in event.get("flat_shapes", []):
-				shape.shift_x(sx)                          # → current screen position
+				shape.shift_x(sx)
 
 				if getattr(shape, '_is_fill_mask', False):
-					shape.draw(self._press_canvas)         # white hole — keep white
+					shape.draw(self._press_canvas)
 				else:
 					old_color   = shape.color
 					shape.color = _GREEN
 					shape.draw(self._press_canvas)
-					shape.color = old_color                # restore original
+					shape.color = old_color
 
-				shape.shift_x(-sx)                         # ← undo, scrollingCanvas clean
+				shape.shift_x(-sx)
 
 	def update(self, deltaTime, midi_notes, changedMidi):
 		if self._canvas is None:
 			return
 
 		if not (self.staff_timer and self.staff_timer.running()):
-			if self.noteMatchMode != 2:
+			if self.noteMatchMode != 2 or self.refreshPass==True:
 				self.processUserEvents(midi_notes, changedMidi, trueTime=None)
 				self.clear()
 				self.draw_shapes(self.user_note_shapes, self._canvas)
-				# FIX 1: remove self._canvas.blit(self._debug_overlay) here too
 				return
 
 		self.clear()
@@ -1450,9 +1780,10 @@ class StaffWidget(ChildWidget):
 		match self.noteMatchMode:
 			case 0:
 				events_to_spawn = []
-				now = monotonic()
-				countdown_time = max(0.0, (self.staff_timer.end_time - now) * self.staff_timer.time_scale)
-				trueTime = self.staffEvent[1] - countdown_time
+				#now = monotonic()
+				#countdown_time = max(0.0, (self.staff_timer.end_time - now) * self.staff_timer.time_scale)
+				#trueTime = self.staffEvent[1] - countdown_time
+				trueTime = round((self.staffEvent[1] - self.staff_timer.remaining()),4)
 				target_x = -(trueTime * self.layout_pps)
 				smoothing = 2
 				self._scroll_x += (target_x - self._scroll_x)
@@ -1464,31 +1795,23 @@ class StaffWidget(ChildWidget):
 				):
 					self.overlayEventIndex += 1
 
-				# scrollingCanvas owns all note/bar shapes and scrolls via _scroll_x.
-				# _canvas is a fixed overlay — nothing from dumb_staffEvent goes here.
-				
 				self.processUserEvents(midi_notes, changedMidi, trueTime=trueTime)
 				self._draw_press_window(trueTime)
+
 			case 1:  # Proper Staff Time — variable-speed scroll driven by BPM + fractions
 				if not self._pt_map:
 					return
 
-				self._pt_elapsed += deltaTime
-				trueTime = self._pt_elapsed
+				trueTime = round((self.staffEvent[1] - self.staff_timer.remaining()),4)
 
-				# ── Locate current segment ────────────────────────────────────────
-				# Binary search: find the last chord whose pt_time <= _pt_elapsed.
+				self._pt_elapsed = trueTime
+
 				pt_times = [e['pt_time'] for e in self._pt_map]
 				idx = bisect.bisect_right(pt_times, self._pt_elapsed) - 1
 				idx = max(0, min(idx, len(self._pt_map) - 1))
 
 				entry = self._pt_map[idx]
 
-				# ── Interpolate scroll_x within the segment ───────────────────────
-				# Between chord[idx] and chord[idx+1] we linearly move _scroll_x
-				# from entry['scroll_x'] to next['scroll_x'] over entry['hold_sec']
-				# seconds.  This is the variable-speed magic: a long note (large
-				# hold_sec) scrolls slowly; a short note scrolls quickly.
 				if idx + 1 < len(self._pt_map):
 					next_entry  = self._pt_map[idx + 1]
 					t_into      = self._pt_elapsed - entry['pt_time']
@@ -1498,13 +1821,10 @@ class StaffWidget(ChildWidget):
 						+ frac * (next_entry['scroll_x'] - entry['scroll_x'])
 					)
 				else:
-					# Past the last chord — freeze at its target position.
 					self._scroll_x = entry['scroll_x']
 
-				# ── Show user notes + press-window highlight ──────────────────────
 				self.processUserEvents(midi_notes, changedMidi, trueTime=trueTime)
 
-				# Advance gate past chords that are fully behind the press window.
 				while (
 					self.overlayEventIndex < len(self.dumb_staffEvent)
 					and (self.dumb_staffEvent[self.overlayEventIndex].get('pt_time') or 0.0)
@@ -1522,17 +1842,12 @@ class StaffWidget(ChildWidget):
 				if not self.dumb_staffEvent:
 					return []
 
-				if midi_notes:
+				if midi_notes or self.refreshPass:
 					noteCount = sum(1 for v in midi_notes if v != 0)
 
-					# If notes are being released, the chord is shrinking — remember that.
 					if noteCount < self._prev_note_count:
 						self._chord_was_shrinking = True
 
-					# Advance only when a note is being PRESSED (count going up), and only
-					# if it's a genuinely new chord — either coming from silence or after
-					# the previous chord started shrinking (notes were released).
-					# Releases set _chord_was_shrinking but must NOT advance by themselves.
 					note_count_increased = noteCount > self._prev_note_count
 					has_active_notes = (
 						note_count_increased
@@ -1541,10 +1856,10 @@ class StaffWidget(ChildWidget):
 
 					self._prev_note_count = noteCount
 
-					if changedMidi and has_active_notes:
-						self._chord_was_shrinking = False  # consumed — reset for next chord
+					if (changedMidi and has_active_notes):
+						self._chord_was_shrinking = False
 
-						# Skip bar events — only snap to chords
+						# Skip bar and rest events — only snap to chords
 						while (
 							self.snap_index < len(self.dumb_staffEvent)
 							and self.dumb_staffEvent[self.snap_index].get("type") != "chord"
@@ -1556,7 +1871,21 @@ class StaffWidget(ChildWidget):
 							return self.cachedShapes
 
 						newNoteTime = self.dumb_staffEvent[self.snap_index]["start_sec"]
+
 						self.snap_index += 1
+
+						self._scroll_x = -(newNoteTime * self.layout_pps)
+						self.logger.debug(f"[scroll x]: {self._scroll_x}")
+
+						now = monotonic()
+						countdown_time = self.staff_timer.remaining()
+						trueTime = self.staffEvent[1] - countdown_time
+						self.processUserEvents(midi_notes, changedMidi, trueTime=trueTime)
+					
+					elif self.refreshPass:
+						newIndex=self.snap_index-1
+						sameIndex=newIndex if (newIndex) > (-1) else 0
+						newNoteTime = self.dumb_staffEvent[sameIndex]["start_sec"]
 
 						self._scroll_x = -(newNoteTime * self.layout_pps)
 						self.logger.debug(f"[scroll x]: {self._scroll_x}")
@@ -1573,7 +1902,6 @@ class StaffWidget(ChildWidget):
 						self.processUserEvents(midi_notes, changedMidi, trueTime=trueTime)
 
 				else:
-					# All notes released — next press starts a fresh chord from silence.
 					self._prev_note_count = 0
 					self._chord_was_shrinking = False
 					now = monotonic()
@@ -1599,6 +1927,7 @@ class StaffWidget(ChildWidget):
 
 		temp_shape_list.extend(self.user_note_shapes)
 		self.draw_shapes(temp_shape_list, self._canvas)
+		self.refreshPass=False
 
 
 	def on_destroy(self):
