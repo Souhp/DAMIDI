@@ -144,6 +144,12 @@ class MusicXMLParserState(object):
 		# Keep track of current time signature. Does not support polymeter.
 		self.time_signature = None
 
+		# ── multi-staff / clef state ──────────────────────────────────────────
+		# Inherited by each Measure so later measures keep the last-seen clef.
+		# new_clefs on a Measure only tracks clefs *explicitly* declared there.
+		self.current_staves     = 1
+		self.current_staff_clefs: dict = {}   # staff_number (1-based) → clef_info dict
+
 
 class MusicXMLDocument(object):
 	"""Internal representation of a MusicXML Document.
@@ -506,6 +512,11 @@ class Measure(object):
 		# Record the starting time of this measure so that time signatures
 		# can be inserted at the beginning of the measure
 		self.start_time_position = self.state.time_position
+		# Inherit staff/clef state from parser; new_clefs tracks only
+		# clefs explicitly declared in *this* measure's <attributes> block.
+		self.staves = state.current_staves
+		self.staff_clefs = dict(state.current_staff_clefs)
+		self.new_clefs: list[dict] = []
 		self._parse()
 		# Update the time signature if a partial or pickup measure
 		self._fix_time_signature()
@@ -545,6 +556,54 @@ class Measure(object):
 		for child in xml_attributes:
 			if child.tag == "divisions":
 				self.state.divisions = int(child.text)
+
+			# ── staves ────────────────────────────────────────────────────────
+			elif child.tag == "staves":
+				self.staves = int(child.text)
+				self.state.current_staves = self.staves
+
+			# ── clef ──────────────────────────────────────────────────────────
+			# Example:
+			#   <clef number="1"><sign>G</sign><line>2</line></clef>
+			#   <clef number="2"><sign>F</sign><line>4</line></clef>
+			elif child.tag == "clef":
+				staff_num = int(child.get("number", 1))
+				sign = child.findtext("sign") or "G"
+				line = child.findtext("line")
+				octave_change = child.findtext("clef-octave-change")
+
+				if sign == "G":
+					clef_type = "treble"
+				elif sign == "F":
+					clef_type = "bass"
+				elif sign == "C":
+					# Distinguish alto (line 3) from tenor (line 4)
+					clef_type = "tenor" if line == "4" else "alto"
+				elif sign == "percussion":
+					clef_type = "percussion"
+				else:
+					clef_type = "treble"   # sensible fallback
+
+				clef_info = {
+					"type":          clef_type,
+					"sign":          sign,
+					"line":          line,
+					"octave_change": octave_change,
+				}
+
+				# Save to this measure (full inherited state + new)
+				self.staff_clefs[staff_num] = clef_info
+				# Track explicit clef change with actual absolute time
+				self.new_clefs.append({
+					"staff_num": staff_num,
+					"clef_type": clef_type,
+					"start_sec": self.state.time_position,
+				})
+				# Propagate forward to subsequent measures
+
+				self.state.current_staff_clefs[staff_num] = clef_info
+
+
 			elif child.tag == "key":
 				self.key_signature = KeySignature(self.state, child)
 			elif child.tag == "time":
@@ -683,6 +742,7 @@ class Note(object):
 	def __init__(self, xml_note, state):
 		self.xml_note = xml_note
 		self.voice = 1
+		self.staff = 1   # which staff this note belongs to (1-based)
 		self.is_rest = False
 		self.is_in_chord = False
 		self.is_grace_note = False
@@ -711,6 +771,11 @@ class Note(object):
 				self.is_rest = True
 			elif child.tag == "voice":
 				self.voice = int(child.text)
+			elif child.tag == "staff":
+				try:
+					self.staff = int(child.text)
+				except (TypeError, ValueError):
+					self.staff = 1
 			elif child.tag == "dot":
 				self.note_duration.dots += 1
 			elif child.tag == "type":
@@ -1412,7 +1477,17 @@ def parse_musicxml_chords(xml_path: str,
  
 		if measure_number not in bar_times:
 			bar_times[measure_number] = measure.start_time_position
- 
+
+		# ── clef events: only emit when explicitly defined in this measure ────
+		for clef_change in measure.new_clefs:
+			events.append({
+				"type":      "clef",
+				"measure":   measure_number,
+				"start_sec": clef_change["start_sec"],
+				"staff_num": clef_change["staff_num"],
+				"clef_type": clef_change["clef_type"],
+			})
+		
 		for note in measure.notes:
 			try:
 				note_voice = int(note.voice)
@@ -1506,7 +1581,10 @@ def parse_musicxml_chords(xml_path: str,
 		})
  
 	events.sort(
-		key=lambda e: (round(e["start_sec"], 6), 0 if e["type"] == "bar" else 1)
+		key=lambda e: (
+			round(e["start_sec"], 6),
+			{"clef": 0, "bar": 1}.get(e["type"], 2),
+		)
 	)
 	print(f"done parsing in module (part_index={part_index}, voice={voice}, "
 		  f"{len(chord_map)} chords, {len(rest_map)} rests)")

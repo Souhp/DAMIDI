@@ -3,20 +3,6 @@ pygame_note_shapes.py
 ─────────────────────
 Pygame-native note-shape primitives.
 
-Replaces cairo_note_shapes.py.	The public API is identical:
-
-	pygame_shape_constructor(...)  →  [ ([PygameShape, …], type_string), … ]
-
-Key differences from the Cairo version
-───────────────────────────────────────
-• Colors are (r, g, b, a) ints 0-255 instead of floats 0-1.
-• Shapes draw onto a pygame.Surface instead of a cairo.Context.
-• Bezier / ellipse curves are pre-sampled into point lists at construction
-  time so draw() is a single polygon / lines call with zero math overhead.
-• No ctx.save()/restore(), no transform matrices, no Cairo path state.
-• Hollow noteheads are drawn as outer filled polygon + smaller inner white
-  polygon — always crisp, no thick-polyline aliasing artefacts.
-
 Color locking
 ─────────────
 Each PygameShape has a color_locked flag.  When locked, set_color() is a
@@ -24,8 +10,8 @@ no-op, so edit_shape() calls that reset notes to black each frame silently
 skip already-green (or otherwise pinned) shapes.
 
 Use the module helpers:
-    lock_note_shapes(shape_list)    – lock all non-fill-mask shapes
-    unlock_note_shapes(shape_list)  – unlock all shapes (call on expiry)
+	lock_note_shapes(shape_list)	– lock all non-fill-mask shapes
+	unlock_note_shapes(shape_list)	– unlock all shapes (call on expiry)
 
 Inner "hole" polygons of hollow noteheads carry _is_fill_mask = True and
 are never locked/unlocked by these helpers, so they always stay white.
@@ -33,17 +19,17 @@ are never locked/unlocked by these helpers, so they always stay white.
 Rest shapes
 ───────────
 Rest type strings passed to pygame_shape_constructor:
-    'whole_rest'        — filled rect hanging below a line
-    'half_rest'         — filled rect sitting on top of a line
-    'quarter_rest'      — classic squiggly zigzag
-    'eighth_rest'       — dot + curved stem
-    '16th_rest'         — two dots + curved stem
-    '32nd_rest'         — three dots + curved stem
-    'double_whole_rest' — two thick vertical bars
+	'whole_rest'		— filled rect hanging below a line
+	'half_rest'			— filled rect sitting on top of a line
+	'quarter_rest'		— classic squiggly zigzag
+	'eighth_rest'		— dot + curved stem
+	'16th_rest'			— two dots + curved stem
+	'32nd_rest'			— three dots + curved stem
+	'double_whole_rest' — two thick vertical bars
 
-    shape_y for whole_rest  = the line the rect hangs FROM (top of rect)
-    shape_y for half_rest   = the line the rect sits ON  (bottom of rect)
-    shape_y for all others  = vertical centre of the symbol
+	shape_y for whole_rest	= the line the rect hangs FROM (top of rect)
+	shape_y for half_rest	= the line the rect sits ON  (bottom of rect)
+	shape_y for all others	= vertical centre of the symbol
 """
 
 from __future__ import annotations
@@ -122,7 +108,7 @@ def unlock_note_shapes(shapes: list) -> None:
 # Bezier / curve sampling utilities
 # ─────────────────────────────────────────────────────────────────────────────
 
-_CURVE_STEPS = 16
+_CURVE_STEPS = 48
 
 
 def _sample_cubic(p0, cp1, cp2, p1, steps: int = _CURVE_STEPS):
@@ -411,7 +397,7 @@ class PygameNotehead:
 		k = self._HOLLOW_INNER_SCALE
 		inner_pts = [(cx + (x - cx) * k, cy + (y - cy) * k) for x, y in pts]
 		inner = PygamePolygon(inner_pts, _WHITE)
-		inner._is_fill_mask = True   # ← never recolored by lock/unlock helpers
+		inner._is_fill_mask = True	 # ← never recolored by lock/unlock helpers
 		return [outer, inner]
 
 	@property
@@ -460,6 +446,154 @@ def _accidental_sw(paint, shape_width: float) -> float:
 	return shape_width * 0.15
 
 
+#--
+# Cleff helpers
+#
+
+def _treble_clef(shape_x, shape_y, shape_width, shape_height, color):
+	sp       = shape_height
+	sw       = max(4.5, sp * 0.30)
+	cx, cy   = shape_x, shape_y
+
+	top_y    = cy - sp * 4.5
+	bottom_y = cy + sp * 1.7
+
+	# better engraving alignment
+	#cx -= sp * 0.15
+
+	stem = PygameLine(cx, top_y, cx, bottom_y, color, sw)
+
+# ── Segment A: rise and sweep left ──
+	tail_pts_a = _sample_cubic(
+		(cx, bottom_y),
+
+		(cx + sp * 0.25, bottom_y + sp * 1.2),
+
+		(cx - sp * 0.9, bottom_y + sp * 0.6),
+
+		(cx - sp * 1.2, bottom_y - sp * 0.3),
+		steps=20,
+	)
+
+
+
+	tail = PygamePolyline(tail_pts_a, color, stroke_width=sw)
+
+	pts = []
+
+	# ── Segment A: top curl (FIX: return higher) ─────────────────────────
+	pts += _sample_cubic(
+		(cx,             top_y),
+		(cx + sp * 0.9,  top_y + sp * 0.1),
+		(cx + sp * 1.0,  cy - sp * 3.2),   # higher turnback
+		(cx + sp * 0.35, cy - sp * 2.2),
+		steps=30,
+	)[:-1]
+
+	# ── Segment B: outer loop (FIX: stronger left sweep) ─────────────────
+	pts += _sample_cubic(
+		(cx + sp * 0.35, cy - sp * 2.2),
+		(cx - sp * 1.8,  cy - sp * 0.8),   # push LEFT harder
+		(cx - sp * 1.7,  cy + sp * 0.8),
+		(cx + sp * 0.05, cy + sp * 0.6),
+		steps=26,
+	)[:-1]
+
+	# ── Segment C: inner spiral (FIX: MUST go DOWN) ──────────────────────
+	pts += _sample_cubic(
+		(cx + sp * 0.05, cy + sp * 0.6),
+		(cx + sp * 1.5,  cy + sp * 0.6),   # right push
+		(cx + sp * 0.4,  cy - sp * 1.5),   # start turning inward
+		(cx - sp * 1, cy + sp * 0.2),   # drop through center (KEY FIX)
+		steps=30,
+	)[:-1]
+
+
+
+	body = PygamePolyline(pts, color, stroke_width=sw)
+
+	return [body, stem, tail]
+
+def _bass_clef(shape_x, shape_y, shape_width, shape_height, color):
+	"""
+	Bass (F) clef.
+	shape_y      = F3 line anchor (the F line sits between the two right dots).
+	shape_height = one staff space.
+
+	Fixes:
+	  - Curve now starts from OUTER LEFT edge of main ball
+	  - Proper rounded sweep over top
+	  - Curves inward and downward like true bass clef
+	  - Ball remains centered on F line
+	  - Better visual proportionality
+	"""
+	sp = shape_height
+
+	# Symbol scaling
+	scale = 1.5
+	sw = max(2.5, sp * 0.30)
+
+	cx, cy = shape_x, shape_y
+
+	# ── Main ball centered on F line ──────────────────────────────────────
+	ball_r = sp * 0.3 * scale
+	ball_x = cx - sp * 0.25 * scale
+	ball_y = cy
+
+	# Start from LEFT OUTER edge of ball
+	start_x = ball_x - ball_r
+	start_y = ball_y
+
+	# ── Main bass clef curve ──────────────────────────────────────────────
+	# Sweeps upward, rightward, loops around, then descends
+	body_pts = _sample_cubic(
+		(start_x, start_y),
+
+		# Upper sweep
+		(cx + sp * 0.6 * scale, cy - sp * 1.8 * scale),
+
+		# Outer right curve
+		(cx + sp * 1.5 * scale, cy + sp * 0.8 * scale),
+
+		# Lower tail
+		(cx - sp * 0.1 * scale, cy + sp * 2.1 * scale),
+
+		steps=48,
+	)
+
+	body = PygamePolyline(body_pts, color, stroke_width=sw)
+
+	# ── Filled main ball ──────────────────────────────────────────────────
+	ball = PygameCircle(
+		ball_x,
+		ball_y,
+		ball_r,
+		color,
+		fill=True
+	)
+
+	# ── Two right-side dots ───────────────────────────────────────────────
+	dot_r = sp * 0.16 * scale
+	dot_x = cx + sp * 1.65 * scale
+
+	d1 = PygameCircle(
+		dot_x,
+		cy - sp * 0.45 * scale,
+		dot_r,
+		color,
+		fill=True
+	)
+
+	d2 = PygameCircle(
+		dot_x,
+		cy + sp * 0.45 * scale,
+		dot_r,
+		color,
+		fill=True
+	)
+
+	return [body, ball, d1, d2]
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Rest shape helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -491,10 +625,10 @@ def _eighth_stem_pts(dot_x: float, dot_y: float, dot_r: float,
 	"""
 	h = shape_height * 2.0 * stem_length_scale
 	w = shape_width
-	p0  = (dot_x - dot_r * 0.7, dot_y + dot_r * 0.8)
-	cp1 = (dot_x - w * 0.15,    dot_y + h * 0.35)
-	cp2 = (dot_x - w * 0.55,    dot_y + h * 0.65)
-	p1  = (dot_x - w * 0.45,    dot_y + h)
+	p0	= (dot_x - dot_r * 0.7, dot_y + dot_r * 0.8)
+	cp1 = (dot_x - w * 0.15,	dot_y + h * 0.35)
+	cp2 = (dot_x - w * 0.55,	dot_y + h * 0.65)
+	p1	= (dot_x - w * 0.45,	dot_y + h)
 	return _sample_cubic(p0, cp1, cp2, p1, steps=14)
 
 
@@ -627,7 +761,7 @@ def pygame_shape_constructor(
 				shape_x + shape_height/2.3,
 				shape_y - shape_width/4,
 				shape_height/2.2, shape_width/2, _WHITE)
-			inner._is_fill_mask = True   # ← white hole, never recolored
+			inner._is_fill_mask = True	 # ← white hole, never recolored
 			result.append(([outer, inner], 'whole'))
 
 		# ── grace (type == 0) ─────────────────────────────────────────────────
@@ -751,7 +885,7 @@ def pygame_shape_constructor(
 			rect = _rect_polygon(shape_x, shape_y, rw, rh, color)
 			result.append(([rect], 'whole_rest'))
 
-		# ── half rest  (solid rect sitting ON TOP of shape_y) ─────────────────
+		# ── half rest	(solid rect sitting ON TOP of shape_y) ─────────────────
 		# shape_y = the staff line the rect sits on (rect bottom-edge = shape_y)
 		case 'half_rest':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
@@ -761,14 +895,14 @@ def pygame_shape_constructor(
 			rect = _rect_polygon(shape_x, shape_y - rh, rw, rh, color)
 			result.append(([rect], 'half_rest'))
 
-		# ── double whole rest  (two thick vertical bars) ──────────────────────
+		# ── double whole rest	(two thick vertical bars) ──────────────────────
 		# shape_y = vertical centre of the symbol
 		case 'double_whole_rest':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
 			bar_w = shape_width * 0.22
 			bar_h = shape_height * 1.0
-			sep   = shape_width * 0.55          # half-separation between bars
+			sep   = shape_width * 0.55			# half-separation between bars
 			left  = _rect_polygon(shape_x - sep, shape_y - bar_h / 2, bar_w, bar_h, color)
 			right = _rect_polygon(shape_x + sep, shape_y - bar_h / 2, bar_w, bar_h, color)
 			result.append(([left, right], 'double_whole_rest'))
@@ -776,14 +910,14 @@ def pygame_shape_constructor(
 		# ── quarter rest  (classic squiggly zigzag) ────────────────────────────
 		# shape_y = vertical centre of the symbol
 		# The shape mimics the traditional hand-engraved quarter rest:
-		#   top hook  →  diagonal stroke  →  bottom curl
+		#	top hook  →  diagonal stroke  →  bottom curl
 		case 'quarter_rest':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
 			total_h = shape_height * 3.4
-			w       = shape_width  * 0.9
-			sw      = max(1.5, shape_width * 0.16)
-			ty      = shape_y - total_h * 0.46   # topmost point
+			w		= shape_width  * 0.9
+			sw		= max(1.5, shape_width * 0.16)
+			ty		= shape_y - total_h * 0.46	 # topmost point
 
 			# Segment 1 — top rightward hook
 			seg1 = _sample_cubic(
@@ -818,9 +952,9 @@ def pygame_shape_constructor(
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
 			dot_r  = shape_width  * 0.21
-			dot_x  = shape_x + shape_width  * 0.28
+			dot_x  = shape_x + shape_width	* 0.28
 			dot_y  = shape_y - shape_height * 0.72
-			sw     = max(1.5, shape_width * 0.16)
+			sw	   = max(1.5, shape_width * 0.16)
 
 			dot  = _rest_dot(dot_x, dot_y, dot_r, color)
 			stem_pts = _eighth_stem_pts(dot_x, dot_y, dot_r,
@@ -829,17 +963,17 @@ def pygame_shape_constructor(
 			stem = PygamePolyline(stem_pts, color, stroke_width=sw)
 			result.append(([dot, stem], 'eighth_rest'))
 
-		# ── 16th rest  (two dots + longer curved stem) ────────────────────────
+		# ── 16th rest	(two dots + longer curved stem) ────────────────────────
 		case '16th_rest':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
-			dot_r   = shape_width  * 0.21
-			gap     = shape_height * 0.75          # vertical gap between dots
-			dot1_x  = shape_x + shape_width  * 0.28
-			dot1_y  = shape_y - shape_height * 0.72
-			dot2_x  = dot1_x  - shape_width  * 0.12
-			dot2_y  = dot1_y  + gap
-			sw      = max(1.5, shape_width * 0.16)
+			dot_r	= shape_width  * 0.21
+			gap		= shape_height * 0.75		   # vertical gap between dots
+			dot1_x	= shape_x + shape_width  * 0.28
+			dot1_y	= shape_y - shape_height * 0.72
+			dot2_x	= dot1_x  - shape_width  * 0.12
+			dot2_y	= dot1_y  + gap
+			sw		= max(1.5, shape_width * 0.16)
 
 			dot1 = _rest_dot(dot1_x, dot1_y, dot_r, color)
 			dot2 = _rest_dot(dot2_x, dot2_y, dot_r, color)
@@ -851,19 +985,19 @@ def pygame_shape_constructor(
 			stem = PygamePolyline(stem_pts, color, stroke_width=sw)
 			result.append(([dot1, dot2, stem], '16th_rest'))
 
-		# ── 32nd rest  (three dots + even longer curved stem) ─────────────────
+		# ── 32nd rest	(three dots + even longer curved stem) ─────────────────
 		case '32nd_rest':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
-			dot_r   = shape_width  * 0.20
-			gap     = shape_height * 0.68
-			dot1_x  = shape_x + shape_width  * 0.30
-			dot1_y  = shape_y - shape_height * 0.72
-			dot2_x  = dot1_x  - shape_width  * 0.10
-			dot2_y  = dot1_y  + gap
-			dot3_x  = dot2_x  - shape_width  * 0.10
-			dot3_y  = dot2_y  + gap
-			sw      = max(1.5, shape_width * 0.15)
+			dot_r	= shape_width  * 0.20
+			gap		= shape_height * 0.68
+			dot1_x	= shape_x + shape_width  * 0.30
+			dot1_y	= shape_y - shape_height * 0.72
+			dot2_x	= dot1_x  - shape_width  * 0.10
+			dot2_y	= dot1_y  + gap
+			dot3_x	= dot2_x  - shape_width  * 0.10
+			dot3_y	= dot2_y  + gap
+			sw		= max(1.5, shape_width * 0.15)
 
 			dot1 = _rest_dot(dot1_x, dot1_y, dot_r, color)
 			dot2 = _rest_dot(dot2_x, dot2_y, dot_r, color)
@@ -874,6 +1008,26 @@ def pygame_shape_constructor(
 										stem_length_scale=2.1)
 			stem = PygamePolyline(stem_pts, color, stroke_width=sw)
 			result.append(([dot1, dot2, dot3, stem], '32nd_rest'))
+
+		case 'treble_clef':
+			if not _need(shape_x, shape_y, shape_width, shape_height):
+				return None
+			shapes = _treble_clef(
+				shape_x, shape_y,
+				shape_width, shape_height,
+				color
+			)
+			result.append((shapes, 'treble_clef'))
+
+		case 'bass_clef':
+			if not _need(shape_x, shape_y, shape_width, shape_height):
+				return None
+			shapes = _bass_clef(
+				shape_x, shape_y,
+				shape_width, shape_height,
+				color
+			)
+			result.append((shapes, 'bass_clef'))
 
 		case _:
 			print(f"pygame_shape_constructor: unknown type '{type}'")

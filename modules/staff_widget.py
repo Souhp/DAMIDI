@@ -382,6 +382,28 @@ class StaffWidget(ChildWidget):
 					if near_boundary:
 						shapes_by_chunk[chunk_idx + 1].extend(event['flat_shapes'])
 
+				elif event_type == "clef":
+					# Clef shapes were created with x = default_note_position - note_width*4.
+					# We shift them by (start_sec * layout_pps) to place them just before
+					# the measure they belong to, the same way bar lines are handled.
+					in_bar_nudge = self.note_width * 2 if start > 0 else 0
+					for shape in event['flat_shapes']:
+						shape.shift_x(shift + in_bar_nudge)
+					# Recalculate canvas_x for the clef — it starts left of the note column.
+					clef_canvas_x = round(
+						self.default_note_position - self.note_width * 2 + shift + in_bar_nudge
+					)
+					clef_chunk_idx = int(max(0, clef_canvas_x) // _MAX_CHUNK_W)
+					shapes_by_chunk.setdefault(clef_chunk_idx, [])
+					shapes_by_chunk[clef_chunk_idx].extend(event['flat_shapes'])
+					# Spill into the next chunk if the glyph straddles the boundary.
+					clef_near_boundary = (
+						clef_canvas_x % _MAX_CHUNK_W > _MAX_CHUNK_W - self.note_width * 8
+					)
+					if clef_near_boundary:
+						shapes_by_chunk.setdefault(clef_chunk_idx + 1, [])
+						shapes_by_chunk[clef_chunk_idx + 1].extend(event['flat_shapes'])
+
 		num_chunks = max(1, (int(total_scroll_width) + _MAX_CHUNK_W - 1) // _MAX_CHUNK_W)
 		self._scroll_chunks: list[pygame.Surface] = []
 
@@ -915,6 +937,25 @@ class StaffWidget(ChildWidget):
 		global_note_counter = 0
 		last_playable_shape = None
 
+		# ── Inject default clef events if the parser emitted none ─────────────
+		# Well-formed MusicXML always declares clefs in measure 1, but guard
+		# against bare MIDI-derived or malformed files.
+		has_parser_clefs = any(e.get("type") == "clef" for e in events)
+		if not has_parser_clefs:
+			default_clefs = [("treble", "G4", 1)]
+			if self.showBass:
+				default_clefs.append(("bass", "F3", 2))
+			for clef_type, anchor, staff_num in default_clefs:
+				events = [
+					{
+						"type":      "clef",
+						"measure":   1,
+						"start_sec": 0.0,
+						"staff_num": staff_num,
+						"clef_type": clef_type,
+					}
+				] + list(events)
+
 		for index, i in enumerate(events):
 			event_type = i.get("type")
 
@@ -1046,10 +1087,53 @@ class StaffWidget(ChildWidget):
 				})
 				last_playable_shape = i
 
+			# ── clef ──────────────────────────────────────────────────────────
+			elif event_type == "clef":
+				clef_type = i.get("clef_type", "treble")
+				staff_num = i.get("staff_num", 1)
+
+				# Map clef type → (staff-anchor note, pygame_shape_constructor key)
+				_CLEF_ANCHORS = {
+					"treble": ("G4", "treble_clef"),
+					"bass":   ("F3", "bass_clef"),
+					"alto":   ("G4", "treble_clef"),   # approximate
+					"tenor":  ("G4", "treble_clef"),   # approximate
+				}
+				if clef_type not in _CLEF_ANCHORS:
+					continue
+				anchor, shape_type = _CLEF_ANCHORS[clef_type]
+				if anchor not in self.note_dic:
+					continue   # staff layout doesn't cover this range
+
+				# Clef sits LEFT of the note column by ~4 note-widths so it
+				# never overlaps the first note.
+				clef_x = self.default_note_position - self.note_width * 4
+				clef_w = self.note_width   # generous so the glyph is legible
+				clef_h = self.note_height
+
+				clef_shapes = pygame_shape_constructor(
+					shape_x     = clef_x,
+					shape_y     = self.line_y(self.note_dic[anchor]),
+					shape_width  = clef_w,
+					shape_height = clef_h,
+					type         = shape_type,
+				)
+				if clef_shapes is None:
+					continue
+
+				flat = [s for shape_list, _ in clef_shapes for s in shape_list]
+
+				dumb_events.append({
+					"type"       : "clef",
+					"shapes"     : clef_shapes,
+					"flat_shapes": flat,
+					"start_sec"  : i.get("start_sec", 0.0),
+					"clef_type"  : clef_type,
+					"staff_num"  : staff_num,
+					"color"      : None,
+				})
+
 		return dumb_events
-
-
-	def _find_next_note_time(self, events, current_div):
 		for event in events:
 			if event.get("type") == "chord" and event.get("start_div") > current_div:
 				return event.get("start_sec")
@@ -1083,6 +1167,12 @@ class StaffWidget(ChildWidget):
 
 		# Rests scroll just like chords but are never recoloured for MIDI matching.
 		if event_type == "rest":
+			for shape in shape_to_resize.get("flat_shapes", []):
+				self._shift_drawable_x(shape, dx)
+			return
+
+		# Clefs scroll like bars — shift only, never recoloured.
+		if event_type == "clef":
 			for shape in shape_to_resize.get("flat_shapes", []):
 				self._shift_drawable_x(shape, dx)
 			return
