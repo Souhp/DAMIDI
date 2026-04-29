@@ -450,13 +450,13 @@ def _accidental_sw(paint, shape_width: float) -> float:
 # Cleff helpers
 #
 
-def _treble_clef(shape_x, shape_y, shape_width, shape_height, color):
+def _treble_clef(shape_x, shape_y, shape_width, shape_height, color, scale=1.5):
 	sp       = shape_height
-	sw       = max(4.5, sp * 0.30)
+	sw       = max(2.5, sp * 0.30)
 	cx, cy   = shape_x, shape_y
 
-	top_y    = cy - sp * 4.5
-	bottom_y = cy + sp * 1.7
+	top_y    = cy - sp * 4.5 * scale
+	bottom_y = cy + sp * 1.7 * scale
 
 	# better engraving alignment
 	#cx -= sp * 0.15
@@ -467,11 +467,11 @@ def _treble_clef(shape_x, shape_y, shape_width, shape_height, color):
 	tail_pts_a = _sample_cubic(
 		(cx, bottom_y),
 
-		(cx + sp * 0.25, bottom_y + sp * 1.2),
+		(cx + sp * 0.25 * scale, bottom_y + sp * 1.2 * scale),
 
-		(cx - sp * 0.9, bottom_y + sp * 0.6),
+		(cx - sp * 0.9 * scale, bottom_y + sp * 0.6 * scale),
 
-		(cx - sp * 1.2, bottom_y - sp * 0.3),
+		(cx - sp * 1.2 * scale, bottom_y - sp * 0.3 * scale),
 		steps=20,
 	)
 
@@ -484,27 +484,27 @@ def _treble_clef(shape_x, shape_y, shape_width, shape_height, color):
 	# ── Segment A: top curl (FIX: return higher) ─────────────────────────
 	pts += _sample_cubic(
 		(cx,             top_y),
-		(cx + sp * 0.9,  top_y + sp * 0.1),
-		(cx + sp * 1.0,  cy - sp * 3.2),   # higher turnback
-		(cx + sp * 0.35, cy - sp * 2.2),
+		(cx + sp * 0.9 * scale,  top_y + sp * 0.1 * scale),
+		(cx + sp * 1.0 * scale,  cy - sp * 3.2 * scale),   # higher turnback
+		(cx + sp * 0.35 * scale, cy - sp * 2.2 * scale),
 		steps=30,
 	)[:-1]
 
 	# ── Segment B: outer loop (FIX: stronger left sweep) ─────────────────
 	pts += _sample_cubic(
-		(cx + sp * 0.35, cy - sp * 2.2),
-		(cx - sp * 1.8,  cy - sp * 0.8),   # push LEFT harder
-		(cx - sp * 1.7,  cy + sp * 0.8),
-		(cx + sp * 0.05, cy + sp * 0.6),
+		(cx + sp * 0.35 * scale, cy - sp * 2.2 * scale),
+		(cx - sp * 1.8 * scale,  cy - sp * 0.8 * scale),   # push LEFT harder
+		(cx - sp * 1.7 * scale,  cy + sp * 0.8 * scale),
+		(cx + sp * 0.05 * scale, cy + sp * 0.6 * scale),
 		steps=26,
 	)[:-1]
 
 	# ── Segment C: inner spiral (FIX: MUST go DOWN) ──────────────────────
 	pts += _sample_cubic(
-		(cx + sp * 0.05, cy + sp * 0.6),
-		(cx + sp * 1.5,  cy + sp * 0.6),   # right push
-		(cx + sp * 0.4,  cy - sp * 1.5),   # start turning inward
-		(cx - sp * 1, cy + sp * 0.2),   # drop through center (KEY FIX)
+		(cx + sp * 0.05 * scale, cy + sp * 0.6 * scale),
+		(cx + sp * 1.5 * scale,  cy + sp * 0.6 * scale),   # right push
+		(cx + sp * 0.4 * scale,  cy - sp * 1.5 * scale),   # start turning inward
+		(cx - sp * 1 * scale, cy + sp * 0.2 * scale),   # drop through center (KEY FIX)
 		steps=30,
 	)[:-1]
 
@@ -514,7 +514,7 @@ def _treble_clef(shape_x, shape_y, shape_width, shape_height, color):
 
 	return [body, stem, tail]
 
-def _bass_clef(shape_x, shape_y, shape_width, shape_height, color):
+def _bass_clef(shape_x, shape_y, shape_width, shape_height, color, scale=1.5):
 	"""
 	Bass (F) clef.
 	shape_y      = F3 line anchor (the F line sits between the two right dots).
@@ -528,9 +528,8 @@ def _bass_clef(shape_x, shape_y, shape_width, shape_height, color):
 	  - Better visual proportionality
 	"""
 	sp = shape_height
-
+	scale=scale*1.5
 	# Symbol scaling
-	scale = 1.5
 	sw = max(2.5, sp * 0.30)
 
 	cx, cy = shape_x, shape_y
@@ -649,6 +648,7 @@ def pygame_shape_constructor(
 	left_margin   = None,
 	right_margin  = None,
 	dotted: bool  = False,
+	clef_scale    = None,
 ) -> list | None:
 	if type is None:
 		return None
@@ -1015,7 +1015,8 @@ def pygame_shape_constructor(
 			shapes = _treble_clef(
 				shape_x, shape_y,
 				shape_width, shape_height,
-				color
+				color,
+				1.5 if clef_scale is None else clef_scale,
 			)
 			result.append((shapes, 'treble_clef'))
 
@@ -1025,7 +1026,8 @@ def pygame_shape_constructor(
 			shapes = _bass_clef(
 				shape_x, shape_y,
 				shape_width, shape_height,
-				color
+				color,
+				1.5 if clef_scale is None else clef_scale,
 			)
 			result.append((shapes, 'bass_clef'))
 

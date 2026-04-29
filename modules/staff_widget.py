@@ -386,12 +386,12 @@ class StaffWidget(ChildWidget):
 					# Clef shapes were created with x = default_note_position - note_width*4.
 					# We shift them by (start_sec * layout_pps) to place them just before
 					# the measure they belong to, the same way bar lines are handled.
-					in_bar_nudge = self.note_width * 2 if start > 0 else 0
+					in_bar_nudge = self.note_width * 2
 					for shape in event['flat_shapes']:
 						shape.shift_x(shift + in_bar_nudge)
 					# Recalculate canvas_x for the clef — it starts left of the note column.
 					clef_canvas_x = round(
-						self.default_note_position - self.note_width * 2 + shift + in_bar_nudge
+						self.default_note_position - self.note_width * 4 + shift + in_bar_nudge
 					)
 					clef_chunk_idx = int(max(0, clef_canvas_x) // _MAX_CHUNK_W)
 					shapes_by_chunk.setdefault(clef_chunk_idx, [])
@@ -562,6 +562,32 @@ class StaffWidget(ChildWidget):
 	def line_y(self, index: int) -> float:
 		return self._line_ys[index]
 
+	def staff_number(self, staff_num: int | None) -> int:
+		try:
+			return int(staff_num)
+		except (TypeError, ValueError):
+			return 1
+
+	def staff_line_offset(self, staff_num: int | None, clef_type: str | None = None) -> int:
+		"""Return the line-index offset for a 1-based MusicXML staff number."""
+		staff_num = self.staff_number(staff_num)
+		if staff_num <= 1:
+			return 0
+		if clef_type != "treble":
+			return 0
+		return 12 * (staff_num - 1)
+
+	def staff_note_index(
+		self,
+		base_index: int,
+		staff_num: int | None = 1,
+		clef_type: str | None = None,
+	) -> int | None:
+		index = base_index + self.staff_line_offset(staff_num, clef_type)
+		if 0 <= index < len(self._line_ys):
+			return index
+		return None
+
 
 	def _on_play_btn(self, event):
 		if self.staff_timer is None:
@@ -667,7 +693,12 @@ class StaffWidget(ChildWidget):
 			print(f"key:{i},   item{x}:")
 
 
-	def _get_rest_y(self, note_type: str) -> float:
+	def _get_rest_y(
+		self,
+		note_type: str,
+		staff_num: int | None = 1,
+		clef_type: str | None = None,
+	) -> float:
 		"""
 		Return the pixel-y for a rest symbol of the given MusicXML note_type.
 
@@ -679,15 +710,23 @@ class StaffWidget(ChildWidget):
 		Works for bass+treble layouts too because note_dic maps the same
 		note names to the correct line indices in either configuration.
 		"""
-		if note_type in ('whole', 'double_whole', 'breve', 'long', 'maxima'):
-			lookup = 'D5'
-		elif note_type == 'half':
-			lookup = 'B4'
+		if clef_type == "bass":
+			if note_type in ('whole', 'double_whole', 'breve', 'long', 'maxima'):
+				lookup = 'F3'
+			else:
+				lookup = 'D3'
 		else:
-			lookup = 'B4'
+			if note_type in ('whole', 'double_whole', 'breve', 'long', 'maxima'):
+				lookup = 'D5'
+			elif note_type == 'half':
+				lookup = 'B4'
+			else:
+				lookup = 'B4'
 
 		if lookup in self.note_dic:
-			return self.line_y(self.note_dic[lookup])
+			idx = self.staff_note_index(self.note_dic[lookup], staff_num, clef_type)
+			if idx is not None:
+				return self.line_y(idx)
 		return self.canvas_height / 2.0
 
 
@@ -936,6 +975,7 @@ class StaffWidget(ChildWidget):
 		dumb_events			= []
 		global_note_counter = 0
 		last_playable_shape = None
+		current_staff_clefs = {}
 
 		# ── Inject default clef events if the parser emitted none ─────────────
 		# Well-formed MusicXML always declares clefs in measure 1, but guard
@@ -999,6 +1039,8 @@ class StaffWidget(ChildWidget):
 
 				for pl_index, note in enumerate(notes, start=1):
 					global_note_counter += 1
+					staff_num = self.staff_number(note.get("staff", 1))
+					clef_type = current_staff_clefs.get(staff_num)
 					pitch        = note.get('display_pitch', note.get('pitch'))
 					tscale_note  = str(self.manager.midi_to_scale_note(pitch))
 					note_name	 = tscale_note[0]
@@ -1019,7 +1061,9 @@ class StaffWidget(ChildWidget):
 						lookup_key = str(note_name + note_octave)
 
 					if lookup_key in self.note_dic:
-						idx = self.note_dic[lookup_key]
+						idx = self.staff_note_index(self.note_dic[lookup_key], staff_num, clef_type)
+						if idx is None:
+							continue
 						note_shapes, accidentals_list, jumped, last_played_index, current_position = \
 							self.make_note(
 								pl_index,
@@ -1058,8 +1102,10 @@ class StaffWidget(ChildWidget):
 				xml_note_type  = i.get("note_type", "quarter")
 				shape_type_str = _REST_TYPE_MAP.get(xml_note_type, "quarter_rest")
 				dotted         = i.get("dots", 0) > 0
+				staff_num      = self.staff_number(i.get("staff", 1))
+				clef_type      = current_staff_clefs.get(staff_num)
 
-				rest_y = self._get_rest_y(xml_note_type)
+				rest_y = self._get_rest_y(xml_note_type, staff_num, clef_type)
 
 				rest_shapes = pygame_shape_constructor(
 					shape_x      = self.default_note_position,
@@ -1090,7 +1136,8 @@ class StaffWidget(ChildWidget):
 			# ── clef ──────────────────────────────────────────────────────────
 			elif event_type == "clef":
 				clef_type = i.get("clef_type", "treble")
-				staff_num = i.get("staff_num", 1)
+				staff_num = self.staff_number(i.get("staff_num", 1))
+				current_staff_clefs[staff_num] = clef_type
 
 				# Map clef type → (staff-anchor note, pygame_shape_constructor key)
 				_CLEF_ANCHORS = {
@@ -1104,19 +1151,24 @@ class StaffWidget(ChildWidget):
 				anchor, shape_type = _CLEF_ANCHORS[clef_type]
 				if anchor not in self.note_dic:
 					continue   # staff layout doesn't cover this range
+				anchor_idx = self.staff_note_index(self.note_dic[anchor], staff_num, clef_type)
+				if anchor_idx is None:
+					continue
 
 				# Clef sits LEFT of the note column by ~4 note-widths so it
 				# never overlaps the first note.
-				clef_x = self.default_note_position - self.note_width * 4
+				clef_x = self.default_note_position - self.note_width * 6
 				clef_w = self.note_width   # generous so the glyph is legible
 				clef_h = self.note_height
+				clef_scale = 0.7 if float(i.get("start_sec", 0.0) or 0.0) > 0.0 else 1
 
 				clef_shapes = pygame_shape_constructor(
 					shape_x     = clef_x,
-					shape_y     = self.line_y(self.note_dic[anchor]),
+					shape_y     = self.line_y(anchor_idx),
 					shape_width  = clef_w,
 					shape_height = clef_h,
 					type         = shape_type,
+					clef_scale   = clef_scale,
 				)
 				if clef_shapes is None:
 					continue
@@ -1132,6 +1184,7 @@ class StaffWidget(ChildWidget):
 					"staff_num"  : staff_num,
 					"color"      : None,
 				})
+				
 
 		return dumb_events
 		for event in events:
