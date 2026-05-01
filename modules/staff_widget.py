@@ -231,8 +231,10 @@ class StaffWidget(ChildWidget):
 
 		# ── part / voice state ─────────────────────────────────────────────────
 		self._part_index:  int  = 0          # 0-based index into doc.parts
-		
-		self._voice: int | None = None   # None = all voices
+
+		self._voice: int | None = None       # None = all voices; otherwise the
+		                                     # smallest voice number selected
+		self._selected_voices: list[int] = []  # all currently selected voice numbers
 		self._parts_info:  list = []         # populated on first score load
 		self._selected_part_indices: list[int] = [] 
 		self._beats_per_bar: int = 4         # updated from time signatures
@@ -369,12 +371,14 @@ class StaffWidget(ChildWidget):
 						shapes_by_chunk[chunk_idx].extend(shapes_list)
 						if near_boundary:
 							shapes_by_chunk[chunk_idx + 1].extend(shapes_list)
+
 				elif event_type == "chord":
 					for shape in event['flat_shapes']:
 						shape.shift_x(shift)
 					shapes_by_chunk[chunk_idx].extend(event['flat_shapes'])
 					if near_boundary:
 						shapes_by_chunk[chunk_idx + 1].extend(event['flat_shapes'])
+				
 				elif event_type == "rest":
 					for shape in event['flat_shapes']:
 						shape.shift_x(shift)
@@ -391,7 +395,7 @@ class StaffWidget(ChildWidget):
 						shape.shift_x(shift + in_bar_nudge)
 					# Recalculate canvas_x for the clef — it starts left of the note column.
 					clef_canvas_x = round(
-						self.default_note_position - self.note_width * 4 + shift + in_bar_nudge
+						self.default_note_position - abs(self.default_note_position/10) + shift + in_bar_nudge
 					)
 					clef_chunk_idx = int(max(0, clef_canvas_x) // _MAX_CHUNK_W)
 					shapes_by_chunk.setdefault(clef_chunk_idx, [])
@@ -403,6 +407,84 @@ class StaffWidget(ChildWidget):
 					if clef_near_boundary:
 						shapes_by_chunk.setdefault(clef_chunk_idx + 1, [])
 						shapes_by_chunk[clef_chunk_idx + 1].extend(event['flat_shapes'])
+
+			# ── Post-pass: nudge rests that overlap an incoming clef glyph ────────
+			#
+			# Clef shapes were created at (default_note_position - note_width*6)
+			# and shifted by (shift + in_bar_nudge) in the loop above.
+			# Rests land at default_note_position + shift.
+			# When they share a start_sec the clef right edge overlaps the rest,
+			# so we push the rest left until it clears the glyph.
+			_CLEF_GLYPH_W = 6    # glyph spans ~6 note-widths from its anchor
+			_NUDGE_MARGIN = 0.5  # extra breathing room (in note-widths)
+
+			for clef_ev in self.dumb_staffEvent:
+				if clef_ev.get("type") != "clef":
+					continue
+				cleff_sec = clef_ev.get("start_sec",0.0)
+				
+				#skip first clefs
+				if cleff_sec<=0.0:
+					continue
+
+				clef_shift   = (clef_ev.get("start_sec") or 0.0) * self.layout_pps
+				in_bar_nudge = self.note_width * 2
+				clef_left    = (
+					self.default_note_position
+					- self.note_width * _CLEF_GLYPH_W
+					+ clef_shift
+					+ in_bar_nudge
+				)
+				clef_right = clef_left + self.note_width * _CLEF_GLYPH_W
+
+				for rest_ev in self.dumb_staffEvent:
+					if rest_ev.get("type") != "rest":
+						continue
+					rest_x = rest_ev.get("x_position")
+					if rest_x is None:
+						continue
+					rest_right = rest_x + self.note_width
+
+					# AABB overlap check
+					if rest_x < clef_right and rest_right > clef_left:
+						nudge_px = clef_right - rest_x + self.note_width * _NUDGE_MARGIN
+
+						# Find the right edge of the nearest event sitting to the
+						# left of this rest so we don't nudge it into that neighbour.
+						# A small gap (half a note-width) is kept between them.
+						left_neighbour_right = 0.0
+						for ev in self.dumb_staffEvent:
+							if ev is rest_ev:
+								continue
+							ev_x = ev.get("x_position")
+							if ev_x is None:
+								continue
+							ev_right = ev_x + self.note_width
+							if ev_right <= rest_x and ev_right > left_neighbour_right:
+								left_neighbour_right = ev_right
+
+						_LEFT_GAP    = self.note_width * 0.5
+						available_px = rest_x - left_neighbour_right - _LEFT_GAP
+
+						# If there is no room at all, skip the nudge entirely —
+						# a partial clef overlap is better than cramming left.
+						if available_px <= 0:
+							continue
+
+						# Cap: only move as far left as the available space allows.
+						nudge_px = min(nudge_px, available_px)
+
+						for shape in rest_ev["flat_shapes"]:
+							shape.shift_x(-nudge_px)
+						rest_ev["x_position"] -= nudge_px
+
+						# If the nudge crosses a chunk boundary, register the
+						# shapes in the earlier chunk so they still get drawn.
+						old_chunk = int(max(0, rest_x) // _MAX_CHUNK_W)
+						new_chunk = int(max(0, rest_ev["x_position"]) // _MAX_CHUNK_W)
+						if new_chunk < old_chunk:
+							shapes_by_chunk.setdefault(new_chunk, [])
+							shapes_by_chunk[new_chunk].extend(rest_ev["flat_shapes"])
 
 		num_chunks = max(1, (int(total_scroll_width) + _MAX_CHUNK_W - 1) // _MAX_CHUNK_W)
 		self._scroll_chunks: list[pygame.Surface] = []
@@ -672,8 +754,8 @@ class StaffWidget(ChildWidget):
 		self._reset_pt_state()
 		self.staff_timer.play()
 		if not playing:
-			time.sleep(0.05)
 			self.staff_timer.pause()
+			self.refreshPass=True
 	
 	def set_note_dic(self):
 		note_names = ['C', 'D', 'E', 'F', 'G', 'A', 'B']
@@ -996,6 +1078,7 @@ class StaffWidget(ChildWidget):
 					}
 				] + list(events)
 
+		numOfEvents=len(events)
 		for index, i in enumerate(events):
 			event_type = i.get("type")
 
@@ -1106,6 +1189,9 @@ class StaffWidget(ChildWidget):
 				clef_type      = current_staff_clefs.get(staff_num)
 
 				rest_y = self._get_rest_y(xml_note_type, staff_num, clef_type)
+				#check if rest is ontop of a cleff
+				
+
 
 				rest_shapes = pygame_shape_constructor(
 					shape_x      = self.default_note_position,
@@ -1130,8 +1216,10 @@ class StaffWidget(ChildWidget):
 					"start_sec"   : i.get("start_sec"),
 					"min_fraction": i.get("min_fraction", Fraction(1, 4)),
 					"color"       : None,
+					"isOnChord"	  : i.get("isOnChord")
 				})
 				last_playable_shape = i
+
 
 			# ── clef ──────────────────────────────────────────────────────────
 			elif event_type == "clef":
@@ -1432,10 +1520,10 @@ class StaffWidget(ChildWidget):
 		self.overlayEventIndex = 0
 
 	def reParseXml(self):
-		"""Re-parse the current file with the updated part selection."""
-		from modules.mxmlParser import parse_musicxml_chords, get_parts_info   # ← add get_parts_info
+		"""Re-parse the current file with the updated part / voice selection."""
+		from modules.mxmlParser import parse_musicxml_chords, get_parts_info
 		self.staffEvent = parse_musicxml_chords(
-			self.xmlFilePath, part_index=self._part_index, voice=None
+			self.xmlFilePath, part_index=self._part_index, voice=self._voice
 		)
 		self.staff_timer = self.Timer(self.staffEvent[1])
 		self.dumb_staffEvent = None
@@ -1475,7 +1563,7 @@ class StaffWidget(ChildWidget):
 			{
 				"type": "dropdown",
 				"label": "Note Match Mode",
-				"options": ["Real Time Scroll", "Proper Staff Time", "Per Press","None"],
+				"options": ["Real Time Scroll", "Per Press","None"], #I MADE A VIDEO TO EXPLAIN WHY I DECIDED TO DROP PROPER STAFF TIME BUT KEEP THE IDEA FOR LATER
 				"on_change": self.changeScrollMode,
 				"defaultOption":self.noteMatchModeStr
 			})
@@ -1521,6 +1609,11 @@ class StaffWidget(ChildWidget):
 				elif new_selected:
 					self._part_index = new_selected[0]  # fallback if nothing new
 
+				# Reset voice to default when the part changes so we don't carry
+				# over a voice number that may not exist in the new part.
+				self._voice = None
+				self._selected_voices = []
+
 				self._selected_part_indices = new_selected
 
 				if self.xmlFilePath:
@@ -1540,6 +1633,41 @@ class StaffWidget(ChildWidget):
 				"on_change": changeScoreVoice
 				}
 			)
+
+			# ── per-part voice selector ───────────────────────────────────────────
+			current_part_info = next(
+				(p for p in self._parts_info if p['index'] == self._part_index), None
+			)
+			if current_part_info and len(current_part_info.get('voices', [])) > 1:
+				available_voices = current_part_info['voices']   # already sorted ascending
+
+				def changeVoice(states: dict, self=self, available_voices=available_voices):
+					selected_vs = [v for v in available_voices if states.get(str(v), False)]
+					if selected_vs:
+						# Always follow the smallest selected voice number
+						self._voice = min(selected_vs)
+						self._selected_voices = selected_vs
+					else:
+						# Nothing checked → show all voices
+						self._voice = None
+						self._selected_voices = []
+					if self.xmlFilePath:
+						self.reParseXml()
+					self.manager.current.rebuild_sidebar()
+
+				# Pre-tick whichever voice is currently active so the checkbox
+				# reflects the live state after a re-parse / part change.
+				voice_labels   = [str(v) for v in available_voices]
+				active_voice   = self._voice if self._voice in available_voices else available_voices[0]
+				voice_defaults = [v == active_voice for v in available_voices]
+
+				options.append({
+					"type":      "checkbox_list",
+					"label":     "Voice",
+					"options":   voice_labels,
+					"default":   voice_defaults,
+					"on_change": changeVoice,
+				})
 
 
 		#note match mode specific options
@@ -1608,7 +1736,7 @@ class StaffWidget(ChildWidget):
 
 	def _load_xml(self, path):
 		from modules.mxmlParser import parse_musicxml_chords
-		self.staffEvent = parse_musicxml_chords(path, part_index=self._part_index, voice=None)
+		self.staffEvent = parse_musicxml_chords(path, part_index=self._part_index, voice=self._voice)
 		self.staff_timer = self.Timer(self.staffEvent[1])
 		self.dumb_staffEvent = None
 		self.snap_index = 0
@@ -1759,6 +1887,11 @@ class StaffWidget(ChildWidget):
 		for ev in self.dumb_staffEvent:
 			if ev['type'] not in ('chord', 'rest'):
 				continue
+
+			# A rest that lands on the same beat as a chord (isOnChord=True) must
+			# NOT contribute its own hold_sec — the chord already owns that slot.
+			if ev['type'] == 'rest' and ev.get('isOnChord'):
+				continue
 	
 			start_sec       = float(ev.get('start_sec') or 0.0)
 			scroll_x_target = -(start_sec * self.layout_pps)
@@ -1792,9 +1925,13 @@ class StaffWidget(ChildWidget):
 		last_pt_time  = 0.0
 		last_scroll_x = 0.0
 		for ev in self.dumb_staffEvent:
-			if ev['type'] in ('chord', 'rest'):
+			if ev['type'] == "chord":
 				last_pt_time  = ev['pt_time']
 				last_scroll_x = ev['pt_scroll_x']
+			elif ev['type'] == 'rest' and ev["isOnChord"] == False:
+				last_pt_time  = ev['pt_time']
+				last_scroll_x = ev['pt_scroll_x']
+
 			elif ev['type'] == 'bar':
 				ev['pt_time']     = last_pt_time
 				ev['pt_scroll_x'] = last_scroll_x

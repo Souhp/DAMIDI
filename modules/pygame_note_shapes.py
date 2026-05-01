@@ -22,9 +22,9 @@ Rest type strings passed to pygame_shape_constructor:
 	'whole_rest'		— filled rect hanging below a line
 	'half_rest'			— filled rect sitting on top of a line
 	'quarter_rest'		— classic squiggly zigzag
-	'eighth_rest'		— dot + curved stem
-	'16th_rest'			— two dots + curved stem
-	'32nd_rest'			— three dots + curved stem
+	'eighth_rest'		— flag + slanted stem
+	'16th_rest'			— two flags + slanted stem
+	'32nd_rest'			— three flags + slanted stem
 	'double_whole_rest' — two thick vertical bars
 
 	shape_y for whole_rest	= the line the rect hangs FROM (top of rect)
@@ -317,6 +317,37 @@ class PygameEllipse(PygameShape):
 		pygame.draw.ellipse(surface, self.color, rect)
 
 
+class PygameMusicGlyph(PygameShape):
+	__slots__ = ("x", "y", "glyph", "font_size", "color", "_dx",
+				 "color_locked", "_is_fill_mask", "_font_path")
+
+	def __init__(self, x, y, glyph: str, font_size: int,
+				 color=None, font_path: str | None = None):
+		self.x, self.y = x, y
+		self._dx = 0.0
+		self.glyph = glyph
+		self.font_size = max(1, int(font_size))
+		self.color = parse_color(color) if color is not None else _BLACK
+		self.color_locked = False
+		self._is_fill_mask = False
+		self._font_path = font_path
+
+	def shift_x(self, dx: float):
+		self._dx += dx
+
+	def draw(self, surface):
+		if not pygame.font.get_init():
+			pygame.font.init()
+		font = pygame.font.Font(self._font_path, self.font_size)
+		glyph_surf = font.render(self.glyph, True, self.color)
+		bounds = glyph_surf.get_bounding_rect()
+		if bounds.width <= 0 or bounds.height <= 0:
+			return
+		blit_x = round(self.x + self._dx - (bounds.x + bounds.width / 2))
+		blit_y = round(self.y - (bounds.y + bounds.height / 2))
+		surface.blit(glyph_surf, (blit_x, blit_y))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PygameNotehead  —  rotated ellipse via pre-sampled rational quadratic arcs
 # ─────────────────────────────────────────────────────────────────────────────
@@ -573,7 +604,7 @@ def _bass_clef(shape_x, shape_y, shape_width, shape_height, color, scale=1.5):
 
 	# ── Two right-side dots ───────────────────────────────────────────────
 	dot_r = sp * 0.16 * scale
-	dot_x = cx + sp * 1.65 * scale
+	dot_x = cx + sp * 1.3 * scale
 
 	d1 = PygameCircle(
 		dot_x,
@@ -614,21 +645,80 @@ def _rest_dot(x: float, y: float, r: float, color) -> PygameCircle:
 	return PygameCircle(x, y, r, color, fill=True)
 
 
-def _eighth_stem_pts(dot_x: float, dot_y: float, dot_r: float,
-					  shape_width: float, shape_height: float,
-					  stem_length_scale: float = 1.0) -> list:
+def _rest_space(shape_height: float) -> float:
 	"""
-	Pre-sample the curved diagonal stem of an eighth/16th/32nd rest.
-	The stem starts just below the dot and curves to the lower-left,
-	ending at approximately (dot_x - w*0.5, dot_y + h*2 * scale).
+	Return one staff-space from the app's note-height metric.
+
+	StaffWidget passes note_height as 1.5 staff spaces so noteheads look right,
+	but rests are engraved against staff spaces.  Using this keeps rest symbols
+	from ballooning with the notehead proportions.
 	"""
-	h = shape_height * 2.0 * stem_length_scale
-	w = shape_width
-	p0	= (dot_x - dot_r * 0.7, dot_y + dot_r * 0.8)
-	cp1 = (dot_x - w * 0.15,	dot_y + h * 0.35)
-	cp2 = (dot_x - w * 0.55,	dot_y + h * 0.65)
-	p1	= (dot_x - w * 0.45,	dot_y + h)
-	return _sample_cubic(p0, cp1, cp2, p1, steps=14)
+	return shape_height / 1.5
+
+
+def _rest_slash(cx: float, cy: float, length: float, width: float,
+				slant: float, color) -> PygamePolygon:
+	"""Filled slanted stroke used by rests."""
+	dx = slant / 2
+	pts = [
+		(cx - dx - width / 2, cy - length / 2),
+		(cx - dx + width / 2, cy - length / 2),
+		(cx + dx + width / 2, cy + length / 2),
+		(cx + dx - width / 2, cy + length / 2),
+	]
+	return PygamePolygon(pts, color)
+
+
+def _rest_curved_stem(top_x: float, top_y: float,
+					  bottom_x: float, bottom_y: float,
+					  sp: float, color) -> PygamePolyline:
+	"""Curved diagonal stem for eighth and shorter rests."""
+	pts = _sample_cubic(
+		(top_x, top_y),
+		(top_x + sp * 0.34, top_y + sp * 0.48),
+		(bottom_x - sp * 0.46, bottom_y - sp * 0.62),
+		(bottom_x, bottom_y),
+		steps=42,
+	)
+	return PygamePolyline(pts, color, stroke_width=max(2.0, sp * 0.29))
+
+
+def _rest_flag(cx: float, cy: float, sp: float, color,
+			   scale: float = 1.0) -> list[PygameShape]:
+	"""Rounded rest flag: eye plus curved hook."""
+	dot = _rest_dot(cx, cy, sp * 0.28 * scale, color)
+	hook_pts = _sample_cubic(
+		(cx + sp * 0.02 * scale, cy + sp * 0.02 * scale),
+		(cx - sp * 0.50 * scale, cy - sp * 0.02 * scale),
+		(cx - sp * 0.78 * scale, cy + sp * 0.36 * scale),
+		(cx - sp * 0.56 * scale, cy + sp * 0.86 * scale),
+		steps=34,
+	)
+	hook = PygamePolyline(
+		hook_pts,
+		color,
+		stroke_width=max(2.0, sp * 0.30 * scale),
+	)
+	return [dot, hook]
+
+
+def _music_rest_glyph(shape_x: float, shape_y: float, shape_height: float,
+					  glyph: str, color,
+					  size_scale: float = 3.25) -> PygameMusicGlyph | None:
+	if not pygame.font.get_init():
+		pygame.font.init()
+	font_path = pygame.font.match_font("notomusic") or pygame.font.match_font("noto music")
+	if font_path is None:
+		return None
+	sp = _rest_space(shape_height)
+	return PygameMusicGlyph(
+		shape_x,
+		shape_y,
+		glyph,
+		round(sp * size_scale),
+		color,
+		font_path,
+	)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -880,8 +970,9 @@ def pygame_shape_constructor(
 		case 'whole_rest':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
-			rw = shape_width * 1.5
-			rh = shape_height * 0.45
+			sp = _rest_space(shape_height)
+			rw = sp * 1.30
+			rh = sp * 0.50
 			rect = _rect_polygon(shape_x, shape_y, rw, rh, color)
 			result.append(([rect], 'whole_rest'))
 
@@ -890,8 +981,9 @@ def pygame_shape_constructor(
 		case 'half_rest':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
-			rw = shape_width * 1.5
-			rh = shape_height * 0.45
+			sp = _rest_space(shape_height)
+			rw = sp * 1.30
+			rh = sp * 0.50
 			rect = _rect_polygon(shape_x, shape_y - rh, rw, rh, color)
 			result.append(([rect], 'half_rest'))
 
@@ -900,9 +992,10 @@ def pygame_shape_constructor(
 		case 'double_whole_rest':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
-			bar_w = shape_width * 0.22
-			bar_h = shape_height * 1.0
-			sep   = shape_width * 0.55			# half-separation between bars
+			sp = _rest_space(shape_height)
+			bar_w = sp * 0.28
+			bar_h = sp * 1.75
+			sep   = sp * 0.42			# half-separation between bars
 			left  = _rect_polygon(shape_x - sep, shape_y - bar_h / 2, bar_w, bar_h, color)
 			right = _rect_polygon(shape_x + sep, shape_y - bar_h / 2, bar_w, bar_h, color)
 			result.append(([left, right], 'double_whole_rest'))
@@ -914,100 +1007,112 @@ def pygame_shape_constructor(
 		case 'quarter_rest':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
-			total_h = shape_height * 3.4
-			w		= shape_width  * 0.9
-			sw		= max(1.5, shape_width * 0.16)
-			ty		= shape_y - total_h * 0.46	 # topmost point
+			sp = _rest_space(shape_height)
+			g = sp * 1.24
+			sw = max(1.8, g * 0.22)
+			top = shape_y - g * 1.32
 
-			# Segment 1 — top rightward hook
-			seg1 = _sample_cubic(
-				(shape_x - w * 0.05, ty),
-				(shape_x + w * 0.65, ty + total_h * 0.09),
-				(shape_x + w * 0.40, ty + total_h * 0.20),
-				(shape_x - w * 0.20, ty + total_h * 0.36),
-				steps=12,
+			upper = PygamePolyline(_sample_cubic(
+				(shape_x - g * 0.03, top),
+				(shape_x + g * 0.58, top + g * 0.08),
+				(shape_x + g * 0.32, top + g * 0.36),
+				(shape_x - g * 0.24, top + g * 0.70),
+				steps=18,
+			), color, stroke_width=sw)
+			mid = _rest_slash(
+				shape_x - g * 0.02,
+				top + g * 1.04,
+				g * 0.90,
+				g * 0.30,
+				g * 0.74,
+				color,
 			)
-			# Segment 2 — diagonal through centre
-			seg2 = _sample_cubic(
-				(shape_x - w * 0.20, ty + total_h * 0.36),
-				(shape_x + w * 0.15, ty + total_h * 0.48),
-				(shape_x + w * 0.22, ty + total_h * 0.57),
-				(shape_x - w * 0.08, ty + total_h * 0.67),
-				steps=12,
-			)
-			# Segment 3 — bottom left curl with upward tail
-			seg3 = _sample_cubic(
-				(shape_x - w * 0.08, ty + total_h * 0.67),
-				(shape_x - w * 0.50, ty + total_h * 0.80),
-				(shape_x - w * 0.38, ty + total_h * 0.91),
-				(shape_x + w * 0.12, ty + total_h * 1.00),
-				steps=12,
-			)
-			pts = seg1 + seg2[1:] + seg3[1:]
-			result.append(([PygamePolyline(pts, color, stroke_width=sw)], 'quarter_rest'))
+			lower = PygamePolyline(_sample_cubic(
+				(shape_x + g * 0.10, top + g * 1.42),
+				(shape_x - g * 0.48, top + g * 1.56),
+				(shape_x - g * 0.50, top + g * 2.02),
+				(shape_x + g * 0.24, top + g * 2.30),
+				steps=22,
+			), color, stroke_width=sw)
+			result.append(([upper, mid, lower], 'quarter_rest'))
 
-		# ── eighth rest  (filled dot + curved diagonal stem) ──────────────────
-		# shape_y = vertical centre; dot at upper-right, stem sweeps lower-left
+		# ── eighth rest  (flag + slanted stem) ───────────────────────────────
+		# shape_y = vertical centre; flag at upper-right, stem sweeps lower-left
 		case 'eighth_rest':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
-			dot_r  = shape_width  * 0.21
-			dot_x  = shape_x + shape_width	* 0.28
-			dot_y  = shape_y - shape_height * 0.72
-			sw	   = max(1.5, shape_width * 0.16)
+			glyph = _music_rest_glyph(shape_x, shape_y, shape_height, "𝄾", color, 6.55)
+			if glyph is not None:
+				result.append(([glyph], 'eighth_rest'))
+			else:
+				sp = _rest_space(shape_height)
+				flag_x = shape_x + sp * 0.42
+				flag_y = shape_y - sp * 0.64
+				stem = _rest_curved_stem(
+					flag_x - sp * 0.08,
+					flag_y + sp * 0.06,
+					shape_x - sp * 0.35,
+					shape_y + sp * 1.12,
+					sp,
+					color
+				)
+				result.append(([stem, *_rest_flag(flag_x, flag_y, sp, color, 1.08)], 'eighth_rest'))
 
-			dot  = _rest_dot(dot_x, dot_y, dot_r, color)
-			stem_pts = _eighth_stem_pts(dot_x, dot_y, dot_r,
-										shape_width, shape_height,
-										stem_length_scale=1.0)
-			stem = PygamePolyline(stem_pts, color, stroke_width=sw)
-			result.append(([dot, stem], 'eighth_rest'))
-
-		# ── 16th rest	(two dots + longer curved stem) ────────────────────────
+		# ── 16th rest	(two flags + longer slanted stem) ─────────────────────
 		case '16th_rest':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
-			dot_r	= shape_width  * 0.21
-			gap		= shape_height * 0.75		   # vertical gap between dots
-			dot1_x	= shape_x + shape_width  * 0.28
-			dot1_y	= shape_y - shape_height * 0.72
-			dot2_x	= dot1_x  - shape_width  * 0.12
-			dot2_y	= dot1_y  + gap
-			sw		= max(1.5, shape_width * 0.16)
+			glyph = _music_rest_glyph(shape_x, shape_y, shape_height, "𝄿", color, 6.45)
+			if glyph is not None:
+				result.append(([glyph], '16th_rest'))
+			else:
+				sp = _rest_space(shape_height)
+				flag1_x = shape_x + sp * 0.44
+				flag1_y = shape_y - sp * 0.98
+				gap = sp * 0.72
+				stem = _rest_curved_stem(
+					flag1_x - sp * 0.08,
+					flag1_y + sp * 0.05,
+					shape_x - sp * 0.42,
+					shape_y + sp * 1.44,
+					sp,
+					color
+				)
+				shapes = [stem]
+				shapes.extend(_rest_flag(flag1_x, flag1_y, sp, color, 1.02))
+				shapes.extend(_rest_flag(flag1_x - sp * 0.14, flag1_y + gap, sp, color, 1.02))
+				result.append((shapes, '16th_rest'))
 
-			dot1 = _rest_dot(dot1_x, dot1_y, dot_r, color)
-			dot2 = _rest_dot(dot2_x, dot2_y, dot_r, color)
-
-			# Single stem long enough to pass both dots
-			stem_pts = _eighth_stem_pts(dot1_x, dot1_y, dot_r,
-										shape_width, shape_height,
-										stem_length_scale=1.5)
-			stem = PygamePolyline(stem_pts, color, stroke_width=sw)
-			result.append(([dot1, dot2, stem], '16th_rest'))
-
-		# ── 32nd rest	(three dots + even longer curved stem) ─────────────────
+		# ── 32nd rest	(three flags + even longer slanted stem) ───────────────
 		case '32nd_rest':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
-			dot_r	= shape_width  * 0.20
-			gap		= shape_height * 0.68
-			dot1_x	= shape_x + shape_width  * 0.30
-			dot1_y	= shape_y - shape_height * 0.72
-			dot2_x	= dot1_x  - shape_width  * 0.10
-			dot2_y	= dot1_y  + gap
-			dot3_x	= dot2_x  - shape_width  * 0.10
-			dot3_y	= dot2_y  + gap
-			sw		= max(1.5, shape_width * 0.15)
-
-			dot1 = _rest_dot(dot1_x, dot1_y, dot_r, color)
-			dot2 = _rest_dot(dot2_x, dot2_y, dot_r, color)
-			dot3 = _rest_dot(dot3_x, dot3_y, dot_r, color)
-
-			stem_pts = _eighth_stem_pts(dot1_x, dot1_y, dot_r,
-										shape_width, shape_height,
-										stem_length_scale=2.1)
-			stem = PygamePolyline(stem_pts, color, stroke_width=sw)
-			result.append(([dot1, dot2, dot3, stem], '32nd_rest'))
+			glyph = _music_rest_glyph(shape_x, shape_y, shape_height, "𝅀", color, 6.35)
+			if glyph is not None:
+				result.append(([glyph], '32nd_rest'))
+			else:
+				sp = _rest_space(shape_height)
+				flag1_x = shape_x + sp * 0.46
+				flag1_y = shape_y - sp * 1.20
+				gap = sp * 0.66
+				stem = _rest_curved_stem(
+					flag1_x - sp * 0.08,
+					flag1_y + sp * 0.05,
+					shape_x - sp * 0.48,
+					shape_y + sp * 1.70,
+					sp,
+					color
+				)
+				shapes = [stem]
+				for i in range(3):
+					shapes.extend(_rest_flag(
+						flag1_x - sp * 0.13 * i,
+						flag1_y + gap * i,
+						sp,
+						color,
+						0.96,
+					))
+				result.append((shapes, '32nd_rest'))
 
 		case 'treble_clef':
 			if not _need(shape_x, shape_y, shape_width, shape_height):

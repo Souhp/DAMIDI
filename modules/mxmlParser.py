@@ -1451,8 +1451,8 @@ def parse_musicxml_chords(xml_path: str,
 	target_part = doc.parts[part_index]
  
 	events		 = []
-	chord_map	 = {}	# rounded time_position → chord entry  (pitched, voice N)
-	rest_map	 = {}	# rounded time_position → rest entry   (rest,	 voice N)
+	chord_map	 = {}	# rounded time_position → chord entry  (pitched notes)
+	rest_map	 = {}	# rounded time_position → list of rest entries
 	bar_times	 = {}	# measure_number → start_sec
 	listOfTimeSigs = doc.get_time_signatures()
  
@@ -1507,18 +1507,21 @@ def parse_musicxml_chords(xml_path: str,
 						"notes":		[],
 						"duration_sec": 0.0,
 						"fractions":	[],
+						"voices":		set(),
 					}
 				fraction = note.note_duration.duration_ratio()
 				chord_map[t_key]["notes"].append({
 					"pitch":		 note.pitch[1],
 					"display_pitch": note.written_midi_pitch,
 					"staff":		 note.staff,
+					"voice":		 note_voice,
 					"note_type":	 note.note_duration.type,
 					"dots":			 note.note_duration.dots,
 					"duration_div":  note.note_duration.duration,
 					"fraction":		 fraction,
 				})
 				chord_map[t_key]["fractions"].append(fraction)
+				chord_map[t_key]["voices"].add(note_voice)
 				continue
  
 			# ── rest ──────────────────────────────────────────────────────────
@@ -1529,17 +1532,17 @@ def parse_musicxml_chords(xml_path: str,
 					# Determine the type from the time signature.
 					note_type = "whole"
  
-				if t_key not in rest_map:
-					fraction = note.note_duration.duration_ratio()
-					rest_map[t_key] = {
-						"measure":		measure_number,
-						"start_sec":	note.note_duration.time_position,
-						"duration_sec": note.note_duration.seconds,
-						"staff":		note.staff,
-						"note_type":	note_type,
-						"dots":			note.note_duration.dots,
-						"min_fraction": fraction,
-					}
+				fraction = note.note_duration.duration_ratio()
+				rest_map.setdefault(t_key, []).append({
+					"measure":		measure_number,
+					"start_sec":	note.note_duration.time_position,
+					"duration_sec": note.note_duration.seconds,
+					"staff":		note.staff,
+					"voice":		note_voice,
+					"note_type":	note_type,
+					"dots":			note.note_duration.dots,
+					"min_fraction": fraction,
+				})
  
 	# ── Bar events ────────────────────────────────────────────────────────────
 	for measure_number, start_sec in bar_times.items():
@@ -1565,23 +1568,27 @@ def parse_musicxml_chords(xml_path: str,
 		})
  
 	# ── Rest events ───────────────────────────────────────────────────────────
-	# Now that chord_map only contains notes from the TARGET voice, this filter
-	# is safe: a rest is only suppressed if there is a pitched note in the same
-	# voice at the exact same time (which would be a notation error anyway).
-	for t_key, rest in rest_map.items():
+	# Suppress a rest only if a pitched note exists in the same voice at the
+	# same instant. With voice=None, multiple voices are displayed together,
+	# so a rest in voice 2 must survive alongside a chord in voice 1.
+	for t_key, rests in rest_map.items():
+		isOnChord=False
 		if t_key in chord_map:
-			continue   # pitched note takes precedence at this instant
-		events.append({
-			"type":			 "rest",
-			"measure":		 rest["measure"],
-			"start_div":	 int(t_key * doc._state.divisions * 4),
-			"start_sec":	 rest["start_sec"],
-			"duration_sec":  rest["duration_sec"],
-			"staff":		 rest["staff"],
-			"note_type":	 rest["note_type"],
-			"dots":			 rest["dots"],
-			"min_fraction":  rest["min_fraction"],
-		})
+			isOnChord=True	
+		for rest in rests:
+			events.append({
+				"type":			 "rest",
+				"measure":		 rest["measure"],
+				"start_div":	 int(t_key * doc._state.divisions * 4),
+				"start_sec":	 rest["start_sec"],
+				"duration_sec":  rest["duration_sec"],
+				"staff":		 rest["staff"],
+				"voice":		 rest["voice"],
+				"note_type":	 rest["note_type"],
+				"dots":			 rest["dots"],
+				"min_fraction":  rest["min_fraction"],
+				"isOnChord":	 isOnChord,
+			})
  
 	events.sort(
 		key=lambda e: (
@@ -1589,8 +1596,9 @@ def parse_musicxml_chords(xml_path: str,
 			{"clef": 0, "bar": 1}.get(e["type"], 2),
 		)
 	)
+	emitted_rest_count = sum(1 for event in events if event["type"] == "rest")
 	print(f"done parsing in module (part_index={part_index}, voice={voice}, "
-		  f"{len(chord_map)} chords, {len(rest_map)} rests)")
+		  f"{len(chord_map)} chords, {emitted_rest_count} rests)")
 	return events, doc.total_time_secs, listOfTimeSigs
  
  
