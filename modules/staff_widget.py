@@ -19,8 +19,8 @@ import logging
 from modules.mxmlParser import get_parts_info
 from time import sleep
 
-_VISIBLE_16 = {6, 8, 10, 12, 14}
-_VISIBLE_32 = {6, 8, 10, 12, 14, 18, 20, 22, 24, 26}
+_VISIBLE_44_SINGLE = {19, 21, 23, 25, 27}
+_VISIBLE_58_DOUBLE = {19, 21, 23, 25, 27, 31, 33, 35, 37, 39}
 _MAX_CHUNK_W = 8000
 
 _MEDIA_BAR_H_BASE = 44	 # design-space pixels, will be scaled
@@ -171,7 +171,7 @@ class StaffWidget(ChildWidget):
 		self._border_color = border_color
 
 		self.injected_note_staff_division = injected_note_staff_division		
-		self.numIndexes = 32 if showBass else 18
+		self.numIndexes = 58 if showBass else 44
 		self.showBass = showBass
 		self._file_dialog = None 
 		self.staffEvent = None
@@ -181,9 +181,15 @@ class StaffWidget(ChildWidget):
 		self.refreshPass=False#used to make the update go again but just once before hopefully getting flipped
 		
 		if showBass:
-			self.note_range = [2, 6]
+			self._octave_span = 8
+			self._octave_min = -1
+			self._octave_max = 9
+			self.note_range = [0, 8]
 		else:
-			self.note_range = [4, 6]
+			self._octave_span = 6
+			self._octave_min = 0
+			self._octave_max = 9
+			self.note_range = [2, 8]
 
 		self.note_dic = {}
 		self.set_note_dic()
@@ -306,7 +312,7 @@ class StaffWidget(ChildWidget):
 	
 	def precompute_sizes(self):
 		self._line_ys = self._compute_line_ys()
-		self.note_height = (self._line_ys[1] - self._line_ys[0])*1.5
+		self.note_height = (self._line_ys[1] - self._line_ys[0])*2.1
 		self.note_width  = self.note_height * 1.3
 		self.default_note_position = self.canvas_width // (
 			self.injected_note_staff_division or 7.5
@@ -395,7 +401,7 @@ class StaffWidget(ChildWidget):
 						shape.shift_x(shift + in_bar_nudge)
 					# Recalculate canvas_x for the clef — it starts left of the note column.
 					clef_canvas_x = round(
-						self.default_note_position - abs(self.default_note_position/10) + shift + in_bar_nudge
+						(self.default_note_position - self.note_width * 6) + shift + in_bar_nudge
 					)
 					clef_chunk_idx = int(max(0, clef_canvas_x) // _MAX_CHUNK_W)
 					shapes_by_chunk.setdefault(clef_chunk_idx, [])
@@ -489,7 +495,7 @@ class StaffWidget(ChildWidget):
 		num_chunks = max(1, (int(total_scroll_width) + _MAX_CHUNK_W - 1) // _MAX_CHUNK_W)
 		self._scroll_chunks: list[pygame.Surface] = []
 
-		visible = _VISIBLE_32 if self.numIndexes == 32 else _VISIBLE_16
+		visible = _VISIBLE_58_DOUBLE if self.showBass else _VISIBLE_44_SINGLE
 		color   = (0, 0, 0, 255)
 		line_w  = max(1, self.canvas_height // 200)
 
@@ -576,6 +582,27 @@ class StaffWidget(ChildWidget):
 		self.on_event(pygame_gui.UI_BUTTON_PRESSED, self.on_restart_btn, element=self._reset_score_btn,group=self.staffElementGroup)
 
 
+	# ── Octave shift helpers ───────────────────────────────────────────────────
+	def _apply_octave_shift(self, delta: int):
+		low, high = self.note_range
+		new_low = low + delta
+		new_high = high + delta
+
+		if new_low < self._octave_min or new_high > self._octave_max:
+			return
+
+		self.note_range[0] = new_low
+		self.note_range[1] = new_high
+		self.set_note_dic()
+		mode = "removeMediaBar" if self.noteMatchMode == 2 else "addMediaBar"
+		self.buildCanvasElements(mode)
+		self.manager.current.rebuild_sidebar()
+
+	def _shift_octave_down(self):
+		self._apply_octave_shift(-1)
+
+	def _shift_octave_up(self):
+		self._apply_octave_shift(1)
 
 
 	def _build_debug_overlay(self):
@@ -670,6 +697,26 @@ class StaffWidget(ChildWidget):
 			return index
 		return None
 
+	def _split_scale_note(self, scale_note: str) -> tuple[str, int, str]:
+		"""
+		Split scale note text into:
+		- note_name: letter only (A-G)
+		- octave: signed integer octave
+		- accidental_name: note with accidentals only (e.g. C, F#, Ebb)
+		"""
+		if not scale_note:
+			raise ValueError("scale_note cannot be empty")
+
+		note_name = scale_note[0]
+		i = 1
+		accidental_name = note_name
+		while i < len(scale_note) and scale_note[i] in ("#", "b"):
+			accidental_name += scale_note[i]
+			i += 1
+
+		octave = int(scale_note[i:])
+		return note_name, octave, accidental_name
+
 
 	def _on_play_btn(self, event):
 		if self.staff_timer is None:
@@ -757,22 +804,25 @@ class StaffWidget(ChildWidget):
 			self.staff_timer.pause()
 			self.refreshPass=True
 	
-	def set_note_dic(self):
+	def _build_note_dic(self, note_range: list[int]) -> dict[str, int]:
 		note_names = ['C', 'D', 'E', 'F', 'G', 'A', 'B']
-		if self.showBass:
-			start_line_index = 30
-		else:
-			start_line_index = 16
+		start_line_index = self.numIndexes - 1
+		low_octave = int(note_range[0])
+		high_octave = int(note_range[1])
 
-		for i in range(int(self.note_range[0]), int(self.note_range[1])):
-			for x in note_names:
-				self.note_dic[x + str(i)] = start_line_index
-				start_line_index -= 1
+		note_keys = []
+		for octave in range(low_octave, high_octave):
+			for note_name in note_names:
+				note_keys.append(f"{note_name}{octave}")
+		note_keys.append(f"C{high_octave}")
 
-		self.note_dic["C" + str(self.note_range[1])] = start_line_index
+		return {
+			key: start_line_index - idx
+			for idx, key in enumerate(note_keys)
+		}
 
-		for i, x in self.note_dic.items():
-			print(f"key:{i},   item{x}:")
+	def set_note_dic(self):
+		self.note_dic = self._build_note_dic(self.note_range)
 
 
 	def _get_rest_y(
@@ -1126,22 +1176,15 @@ class StaffWidget(ChildWidget):
 					clef_type = current_staff_clefs.get(staff_num)
 					pitch        = note.get('display_pitch', note.get('pitch'))
 					tscale_note  = str(self.manager.midi_to_scale_note(pitch))
-					note_name	 = tscale_note[0]
-					note_octave  = tscale_note[-1]
-					new_scale_note = tscale_note[0]
-					for ch in tscale_note[1:]:
-						if ch in ('#', 'b'):
-							new_scale_note += ch
-						else:
-							break
+					note_name, note_octave, new_scale_note = self._split_scale_note(tscale_note)
 
 					#scales like F# will have C## so to not have c,c#,c## we make c to b#.
 					#but my systems is crude and does not work like that. it just takes in an index and note
 					#so I have to switch it back for this function to let the staff know that this is the first appeance of B and not the last B in the scale
 					if new_scale_note == "B#":
-						lookup_key = str(note_name + str(int(note_octave) - 1))
+						lookup_key = str(note_name + str(note_octave - 1))
 					else:
-						lookup_key = str(note_name + note_octave)
+						lookup_key = str(note_name + str(note_octave))
 
 					if lookup_key in self.note_dic:
 						idx = self.staff_note_index(self.note_dic[lookup_key], staff_num, clef_type)
@@ -1236,23 +1279,36 @@ class StaffWidget(ChildWidget):
 				}
 				if clef_type not in _CLEF_ANCHORS:
 					continue
-				anchor, shape_type = _CLEF_ANCHORS[clef_type]
-				if anchor not in self.note_dic:
-					continue   # staff layout doesn't cover this range
-				anchor_idx = self.staff_note_index(self.note_dic[anchor], staff_num, clef_type)
-				if anchor_idx is None:
+				_, shape_type = _CLEF_ANCHORS[clef_type]
+
+				if self.showBass:
+					# treble staff lines: 19,21,23,25,27 ; bass staff lines: 31,33,35,37,39
+					if staff_num == 2 or clef_type == "bass":
+						anchor_idx = 33  # bass clef F line (2nd line from top)
+					else:
+						anchor_idx = 25  # treble clef G line (2nd line from bottom)
+				else:
+					anchor_idx = 25      # single staff treble G line
+
+				if not (0 <= anchor_idx < len(self._line_ys)):
 					continue
 
 				# Clef sits LEFT of the note column by ~4 note-widths so it
 				# never overlaps the first note.
 				clef_x = self.default_note_position - self.note_width * 6
-				clef_w = self.note_width   # generous so the glyph is legible
-				clef_h = self.note_height
+				clef_w = self.note_width * 1.1   # keep clef proportional on denser grids
+				clef_h = self.note_height * 1.15
 				clef_scale = 0.7 if float(i.get("start_sec", 0.0) or 0.0) > 0.0 else 1
+				clef_y_idx = anchor_idx
+				if shape_type == "treble_clef" and clef_scale < 1:
+					# Small treble clef glyph anchor differs visually from full-size.
+					# Move down by two staff lines (4 index steps) to keep it on G.
+					clef_y_idx = min(len(self._line_ys) - 1, anchor_idx + 4)
+				clef_y = self.line_y(clef_y_idx)
 
 				clef_shapes = pygame_shape_constructor(
 					shape_x     = clef_x,
-					shape_y     = self.line_y(anchor_idx),
+					shape_y     = clef_y,
 					shape_width  = clef_w,
 					shape_height = clef_h,
 					type         = shape_type,
@@ -1559,6 +1615,11 @@ class StaffWidget(ChildWidget):
 
 
 		options = []
+		
+
+
+
+
 		options.append(
 			{
 				"type": "dropdown",
@@ -1588,6 +1649,9 @@ class StaffWidget(ChildWidget):
 		#	"label":    swing_label,
 		#	"callback": _toggle_swing,
 		#})
+
+
+
 		if self.xmlFilePath:
 
 			def changeScoreVoice(states: dict):
@@ -1669,6 +1733,29 @@ class StaffWidget(ChildWidget):
 					"on_change": changeVoice,
 				})
 
+
+		#note match mode specific options
+		options.append({
+			"type":  "label",
+			"text":  "--Octave Shift--",
+		})
+
+		options.append({
+			"type":  "label",
+			"text":  f"Range: C{int(self.note_range[0])} to C{int(self.note_range[1])}",
+		})
+
+		options.append({
+			"type": "button",
+			"label": "Octave -",
+			"callback": self._shift_octave_down,
+		})
+
+		options.append({
+			"type": "button",
+			"label": "Octave +",
+			"callback": self._shift_octave_up,
+		})
 
 		#note match mode specific options
 		options.append({
@@ -1788,16 +1875,11 @@ class StaffWidget(ChildWidget):
 				pl_count += 1
 
 				tscale_note = str(self.manager.midi_to_scale_note(pitch))
-				note_name   = tscale_note[0]
-				note_octave = tscale_note[-1]
-				new_scale_note = tscale_note[0]
-				for ch in tscale_note[1:]:
-					if ch in ('#', 'b'):
-						new_scale_note += ch
-					else:
-						break
+				note_name, note_octave, new_scale_note = self._split_scale_note(tscale_note)
 
-				if str(note_name + note_octave) in self.note_dic:
+				user_octave = note_octave + 1
+				base_key = str(note_name + str(user_octave))
+				if base_key in self.note_dic:
 
 					if self.staff_timer and trueTime:
 						if pitch in old_pressed_midi:
@@ -1815,9 +1897,13 @@ class StaffWidget(ChildWidget):
 					#but my systems is crude and does not work like that. it just takes in an index and note
 					#so I have to switch it back for this function to let the staff know that this is the first appeance of B and not the last B in the scale
 					if new_scale_note == "B#":
-						index = self.note_dic[str(note_name + str(int(note_octave) - 1))]
+						lookup_key = str(note_name + str(user_octave - 1))
 					else:
-						index = self.note_dic[str(note_name + note_octave)]
+						lookup_key = base_key
+
+					if lookup_key not in self.note_dic:
+						continue
+					index = self.note_dic[lookup_key]
 
 					note_result, accidentals, jumped, last_played_index, current_position = self.make_note(
 						pl_count,

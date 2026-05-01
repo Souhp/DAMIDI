@@ -652,14 +652,16 @@ class WidgetScene(Scene):
 
 
 		if event.type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED:
-			for element, cb in self._sidebar_items:
+			for item in self._sidebar_items:
+				if not (isinstance(item, tuple) and len(item) == 2):
+					continue
+				element, cb = item
 				if event.ui_element == element:
 					selected = element.selected_option
-
 					if isinstance(selected, (list, tuple)):
 						selected = selected[0]
-
-					cb(selected)
+					if cb:
+						cb(selected)
 					return
 		for widget, *_ in self._widget_slots:
 			widget.handle_event(event)
