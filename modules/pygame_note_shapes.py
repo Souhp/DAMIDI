@@ -30,12 +30,18 @@ Rest type strings passed to pygame_shape_constructor:
 	shape_y for whole_rest	= the line the rect hangs FROM (top of rect)
 	shape_y for half_rest	= the line the rect sits ON  (bottom of rect)
 	shape_y for all others	= vertical centre of the symbol
+
+Clefs (SMuFL)
+─────────────
+'treble_clef' / 'bass_clef' prefer 𝄞 / 𝄢 from a music font (see _smufl_music_font_path).
+StaffWidget passes staff_space_px so size and pivot scale with line spacing; procedural
+_treble_clef / _bass_clef remain the fallback when no font is found.
 """
 
 from __future__ import annotations
 import math
 import pygame
-from typing import Sequence
+from typing import Literal, Sequence
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Color helpers
@@ -319,10 +325,12 @@ class PygameEllipse(PygameShape):
 
 class PygameMusicGlyph(PygameShape):
 	__slots__ = ("x", "y", "glyph", "font_size", "color", "_dx",
-				 "color_locked", "_is_fill_mask", "_font_path")
+				 "color_locked", "_is_fill_mask", "_font_path",
+				 "_offset_x", "_offset_y", "_surf_cache", "_surf_cache_key")
 
 	def __init__(self, x, y, glyph: str, font_size: int,
-				 color=None, font_path: str | None = None):
+				 color=None, font_path: str | None = None,
+				 offset_x: float = 0.0, offset_y: float = 0.0):
 		self.x, self.y = x, y
 		self._dx = 0.0
 		self.glyph = glyph
@@ -331,20 +339,42 @@ class PygameMusicGlyph(PygameShape):
 		self.color_locked = False
 		self._is_fill_mask = False
 		self._font_path = font_path
+		self._offset_x = offset_x
+		self._offset_y = offset_y
+		self._surf_cache = None
+		self._surf_cache_key = None
 
 	def shift_x(self, dx: float):
 		self._dx += dx
 
-	def draw(self, surface):
+	def set_color(self, color) -> None:
+		if self.color_locked:
+			return
+		new_c = parse_color(color)
+		if new_c != self.color:
+			self._surf_cache = None
+			self._surf_cache_key = None
+		self.color = new_c
+
+	def _glyph_surface(self):
+		key = (self._font_path, self.font_size, self.glyph, self.color)
+		if self._surf_cache is not None and self._surf_cache_key == key:
+			return self._surf_cache
 		if not pygame.font.get_init():
 			pygame.font.init()
 		font = pygame.font.Font(self._font_path, self.font_size)
-		glyph_surf = font.render(self.glyph, True, self.color)
+		self._surf_cache = font.render(self.glyph, True, self.color)
+		self._surf_cache_key = key
+		return self._surf_cache
+
+	def draw(self, surface):
+		glyph_surf = self._glyph_surface()
 		bounds = glyph_surf.get_bounding_rect()
 		if bounds.width <= 0 or bounds.height <= 0:
 			return
-		blit_x = round(self.x + self._dx - (bounds.x + bounds.width / 2))
-		blit_y = round(self.y - (bounds.y + bounds.height / 2))
+		blit_x = round(self.x + self._dx + self._offset_x
+					   - (bounds.x + bounds.width / 2))
+		blit_y = round(self.y + self._offset_y - (bounds.y + bounds.height / 2))
 		surface.blit(glyph_surf, (blit_x, blit_y))
 
 
@@ -702,12 +732,48 @@ def _rest_flag(cx: float, cy: float, sp: float, color,
 	return [dot, hook]
 
 
+_SMUFL_FONT_KEYS = (
+	"notomusic",
+	"noto music",
+	"notomusic-regular",
+	"bravura",
+	"Bravura",
+	"bravura text",
+)
+
+
+def _smufl_music_font_path() -> str | None:
+	if not pygame.font.get_init():
+		pygame.font.init()
+	for key in _SMUFL_FONT_KEYS:
+		path = pygame.font.match_font(key)
+		if path:
+			return path
+	return None
+
+
+_G_CLEF = "\U0001d11e"	 # 𝄞
+_F_CLEF = "\U0001d122"	 # 𝄢
+
+_CLEF_PIVOT_SS_FROM_BOTTOM_TREBLE = 2.06
+_CLEF_PIVOT_SS_FROM_BOTTOM_BASS = 2.94
+_CLEF_BIAS_SS = 0.0
+
+_CLEF_DROP_SS_TREBLE = 0.42
+_CLEF_DROP_SS_BASS_LARGE = 0.10
+_CLEF_DROP_BASS_LARGE_MIN_SC = 0.92
+_CLEF_LIFT_SS_BASS = 0.36
+
+_CLEF_BODY_SS_TREBLE = 7.28
+_CLEF_BODY_SS_BASS = 3.86
+_CLEF_MIN_BODY_SS_TREBLE = 5.0
+_CLEF_MIN_BODY_SS_BASS = 3.35
+
+
 def _music_rest_glyph(shape_x: float, shape_y: float, shape_height: float,
 					  glyph: str, color,
 					  size_scale: float = 3.25) -> PygameMusicGlyph | None:
-	if not pygame.font.get_init():
-		pygame.font.init()
-	font_path = pygame.font.match_font("notomusic") or pygame.font.match_font("noto music")
+	font_path = _smufl_music_font_path()
 	if font_path is None:
 		return None
 	sp = _rest_space(shape_height)
@@ -718,6 +784,96 @@ def _music_rest_glyph(shape_x: float, shape_y: float, shape_height: float,
 		round(sp * size_scale),
 		color,
 		font_path,
+	)
+
+
+def _music_clef_glyph(
+	shape_x: float,
+	shape_y: float,
+	shape_height: float,
+	shape_width: float,
+	color,
+	kind: Literal["treble", "bass"],
+	clef_scale: float | None = None,
+	staff_space_px: float | None = None,
+) -> PygameMusicGlyph | None:
+	font_path = _smufl_music_font_path()
+	if font_path is None:
+		return None
+
+	sc = 1.0 if clef_scale is None else float(clef_scale)
+	sc_vis = max(0.55, min(1.05, sc))
+	scale_term = 0.58 + 0.42 * sc_vis
+
+	if staff_space_px is not None and float(staff_space_px) > 1e-6:
+		ss = float(staff_space_px)
+	else:
+		ss = max(1e-6, shape_height / 1.167)
+
+	if kind == "treble":
+		glyph = _G_CLEF
+		body_ss = _CLEF_BODY_SS_TREBLE
+		min_ss = _CLEF_MIN_BODY_SS_TREBLE
+		pivot_ss = _CLEF_PIVOT_SS_FROM_BOTTOM_TREBLE + _CLEF_BIAS_SS
+		wmul = -0.26
+	elif kind == "bass":
+		glyph = _F_CLEF
+		body_ss = _CLEF_BODY_SS_BASS
+		min_ss = _CLEF_MIN_BODY_SS_BASS
+		pivot_ss = _CLEF_PIVOT_SS_FROM_BOTTOM_BASS + _CLEF_BIAS_SS
+		wmul = -0.22
+	else:
+		return None
+
+	want_h = max(ss * min_ss, ss * body_ss * scale_term)
+
+	c = parse_color(color)
+
+	def _bbox(fs: int) -> pygame.Rect:
+		fp_try = pygame.font.Font(font_path, max(10, fs))
+		return fp_try.render(glyph, True, c).get_bounding_rect()
+
+	tol_h = max(0.65, want_h * 0.035)
+	fs = max(10, round(want_h * 0.92))
+	for _ in range(16):
+		bb = _bbox(fs)
+		bh = float(bb.height)
+		if bh <= 0:
+			fs = fs + 2
+			continue
+		if abs(bh - want_h) <= tol_h:
+			break
+		fs = max(8, round(fs * (want_h / max(bh, 1e-6))))
+
+	font_size = max(8, int(fs))
+	fp = pygame.font.Font(font_path, font_size)
+	s_probe = fp.render(glyph, True, c)
+	b = s_probe.get_bounding_rect()
+	if b.width <= 0 or b.height <= 0:
+		return None
+
+	pivot_sy = float(b.bottom) - pivot_ss * ss
+	cy = float(b.top) + float(b.height) * 0.5
+	oy = cy - pivot_sy
+	if kind == "treble":
+		oy += ss * _CLEF_DROP_SS_TREBLE
+	elif kind == "bass" and sc_vis >= _CLEF_DROP_BASS_LARGE_MIN_SC:
+		oy += ss * _CLEF_DROP_SS_BASS_LARGE
+	if kind == "bass":
+		oy -= ss * _CLEF_LIFT_SS_BASS
+
+	# Anchor against the actual rendered glyph width, not requested shape_width.
+	# This keeps clef horizontal placement stable when layout scaling changes.
+	ox = float(wmul * b.width)
+	return PygameMusicGlyph(
+		shape_x,
+		shape_y,
+		glyph,
+		font_size,
+		color,
+		font_path,
+		offset_x=ox,
+		offset_y=oy,
 	)
 
 
@@ -739,6 +895,7 @@ def pygame_shape_constructor(
 	right_margin  = None,
 	dotted: bool  = False,
 	clef_scale    = None,
+	staff_space_px: float | None = None,
 ) -> list | None:
 	if type is None:
 		return None
@@ -782,7 +939,7 @@ def pygame_shape_constructor(
 		case '16th':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
-			head   = PygameNotehead(shape_x + shape_width/2, shape_y,
+			head   = PygameNotehead(shape_x, shape_y,
 									shape_width, shape_height, -math.pi/6, color)
 			ox, oy = head.stem_down_attach
 			sx, sy = head.stem_up_attach
@@ -1117,24 +1274,52 @@ def pygame_shape_constructor(
 		case 'treble_clef':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
-			shapes = _treble_clef(
-				shape_x, shape_y,
-				shape_width, shape_height,
+			cs = 1.5 if clef_scale is None else clef_scale
+			glyph = _music_clef_glyph(
+				shape_x,
+				shape_y,
+				shape_height,
+				shape_width,
 				color,
-				1.5 if clef_scale is None else clef_scale,
+				"treble",
+				clef_scale,
+				staff_space_px,
 			)
-			result.append((shapes, 'treble_clef'))
+			if glyph is not None:
+				result.append(([glyph], 'treble_clef'))
+			else:
+				shapes = _treble_clef(
+					shape_x, shape_y,
+					shape_width, shape_height,
+					color,
+					cs,
+				)
+				result.append((shapes, 'treble_clef'))
 
 		case 'bass_clef':
 			if not _need(shape_x, shape_y, shape_width, shape_height):
 				return None
-			shapes = _bass_clef(
-				shape_x, shape_y,
-				shape_width, shape_height,
+			cs = 1.5 if clef_scale is None else clef_scale
+			glyph = _music_clef_glyph(
+				shape_x,
+				shape_y,
+				shape_height,
+				shape_width,
 				color,
-				1.5 if clef_scale is None else clef_scale,
+				"bass",
+				clef_scale,
+				staff_space_px,
 			)
-			result.append((shapes, 'bass_clef'))
+			if glyph is not None:
+				result.append(([glyph], 'bass_clef'))
+			else:
+				shapes = _bass_clef(
+					shape_x, shape_y,
+					shape_width, shape_height,
+					color,
+					cs,
+				)
+				result.append((shapes, 'bass_clef'))
 
 		case _:
 			print(f"pygame_shape_constructor: unknown type '{type}'")

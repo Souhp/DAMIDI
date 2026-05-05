@@ -388,6 +388,8 @@ class WidgetScene(Scene):
 			relative_rect=pygame.Rect(0, 0, panel_w, panel_h),
 			manager=self.ui,
 			container=self._sidebar_bg,
+			allow_scroll_x=False,
+			allow_scroll_y=True,
 		))
 
 		# Populate items
@@ -474,6 +476,8 @@ class WidgetScene(Scene):
 				options  = opt["options"]
 				callback = opt["on_change"]
 				defaults = opt.get("default", [False] * len(options))
+				radio = opt.get("radio", False)
+				radio_allow_none = opt.get("radio_allow_none", False)
 
 				lbl_h = self.scaled(24, minimum=24)
 
@@ -513,7 +517,9 @@ class WidgetScene(Scene):
 
 					y += btn_h + btn_gap
 
-				self._sidebar_items.append(("checkbox_list", checkboxes, callback))
+				self._sidebar_items.append(
+					("checkbox_list", checkboxes, callback, radio, radio_allow_none)
+				)
 
 			elif opt["type"] == "button":
 
@@ -530,6 +536,48 @@ class WidgetScene(Scene):
 
 				self._sidebar_items.append((btn, opt["callback"]))
 				y += btn_h + btn_gap
+
+			elif opt["type"] == "text_entry":
+
+				label    = opt["label"]
+				default  = opt.get("default", "")
+				callback = opt.get("on_submit")
+
+				lbl_h = self.scaled(24, minimum=24)
+
+				self._sidebar_add(pygame_gui.elements.UILabel(
+					relative_rect=pygame.Rect(
+						btn_gap, y,
+						panel_w - btn_gap * 2, lbl_h
+					),
+					text=label,
+					manager=self.ui,
+					container=self._sidebar_panel,
+					object_id="#sidebar_label",
+				))
+
+				y += lbl_h + max(2, btn_gap // 2)
+
+				entry_h = max(btn_h, self.scaled(32, minimum=26))
+				entry = self._sidebar_add(pygame_gui.elements.UITextEntryLine(
+					relative_rect=pygame.Rect(
+						btn_gap, y,
+						panel_w - btn_gap * 2, entry_h
+					),
+					manager=self.ui,
+					container=self._sidebar_panel,
+					initial_text=str(default),
+				))
+
+				if callback:
+					self._sidebar_items.append((entry, callback))
+				y += entry_h + btn_gap
+
+		# Tall content needs an explicit inner size or the viewport never scrolls (pygame_gui).
+		content_h = y + btn_gap
+		self._sidebar_panel.set_scrollable_area_dimensions(
+			(panel_w, max(content_h, panel_h))
+		)
 
 		# Start hidden unless the sidebar was already open (e.g. after a rebuild)
 		if not self._sidebar_open:
@@ -625,30 +673,40 @@ class WidgetScene(Scene):
 						self._sidebar_bg.hide()
 						return
 
-				# ✅ CHECKBOX LIST
+				# ✅ CHECKBOX LIST (optional radio: exactly one selected, or none if radio_allow_none)
 				elif isinstance(item, tuple) and item[0] == "checkbox_list":
-					_, checkboxes, callback = item
+					if len(item) >= 5:
+						_, checkboxes, callback, radio, radio_allow_none = item[:5]
+					else:
+						_, checkboxes, callback = item[:3]
+						radio = False
+						radio_allow_none = False
 
 					for cb_item in checkboxes:
-						if event.ui_element == cb_item["button"]:
+						if event.ui_element != cb_item["button"]:
+							continue
 
-							# toggle state
+						if radio:
+							was_checked = cb_item["checked"]
+							if radio_allow_none and was_checked:
+								for c in checkboxes:
+									c["checked"] = False
+							else:
+								for c in checkboxes:
+									c["checked"] = c["button"] == cb_item["button"]
+						else:
 							cb_item["checked"] = not cb_item["checked"]
 
-							# update UI
-							cb_item["button"].set_text(
-								f"[{'X' if cb_item['checked'] else ' '}] {cb_item['label']}"
+						for c in checkboxes:
+							c["button"].set_text(
+								f"[{'X' if c['checked'] else ' '}] {c['label']}"
 							)
 
-							# send full state
-							if callback:
-								states = {
-									c["label"]: c["checked"]
-									for c in checkboxes
-								}
-								callback(states)
+						if callback:
+							states = {c["label"]: c["checked"] for c in checkboxes}
+							callback(states)
 
-							return
+						return
 
 
 		if event.type == pygame_gui.UI_DROP_DOWN_MENU_CHANGED:
@@ -663,6 +721,16 @@ class WidgetScene(Scene):
 					if cb:
 						cb(selected)
 					return
+
+		if event.type == pygame_gui.UI_TEXT_ENTRY_FINISHED:
+			for item in self._sidebar_items:
+				if not (isinstance(item, tuple) and len(item) == 2):
+					continue
+				element, cb = item
+				if event.ui_element == element and cb:
+					cb(getattr(event, "text", "") or "")
+					return
+
 		for widget, *_ in self._widget_slots:
 			widget.handle_event(event)
 

@@ -1420,7 +1420,8 @@ from fractions import Fraction
 def parse_musicxml_chords(xml_path: str,
 						  default_bpm: float = 120,
 						  part_index: int = 0,
-						  voice: int | None = None):   # ← None = all voices
+						  voice: int | None = None,   # ← None = all voices (if allowed_voices also None)
+						  allowed_voices: set[int] | frozenset | None = None):
 	"""
 	Parse a MusicXML file and return
 		(events, total_time_sec, time_signatures)
@@ -1439,6 +1440,7 @@ def parse_musicxml_chords(xml_path: str,
 	voice		: MusicXML voice number to follow within that part (usually 1).
 				  Notes in other voices are silently ignored, which prevents
 				  accompaniment voices from polluting the melody timeline.
+	allowed_voices : if set, only these voice numbers are kept (overrides ``voice``).
 	"""
 	doc = MusicXMLDocument(xml_path, parse=True)
  
@@ -1494,8 +1496,11 @@ def parse_musicxml_chords(xml_path: str,
 			except (TypeError, ValueError, AttributeError):
 				note_voice = 1
 
-			if voice is not None and note_voice != voice:	# ← only filter if voice specified
-				continue 
+			if allowed_voices is not None:
+				if note_voice not in allowed_voices:
+					continue
+			elif voice is not None and note_voice != voice:
+				continue
 			t_key = round(note.note_duration.time_position, 6)
  
 			# ── pitched note ──────────────────────────────────────────────────
@@ -1597,8 +1602,11 @@ def parse_musicxml_chords(xml_path: str,
 		)
 	)
 	emitted_rest_count = sum(1 for event in events if event["type"] == "rest")
-	print(f"done parsing in module (part_index={part_index}, voice={voice}, "
-		  f"{len(chord_map)} chords, {emitted_rest_count} rests)")
+	print(
+		f"done parsing in module (part_index={part_index}, voice={voice}, "
+		f"allowed_voices={allowed_voices}, "
+		f"{len(chord_map)} chords, {emitted_rest_count} rests)"
+	)
 	return events, doc.total_time_secs, listOfTimeSigs
  
  

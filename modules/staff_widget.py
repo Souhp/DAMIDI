@@ -14,10 +14,13 @@ from modules.pygame_note_shapes import pygame_shape_constructor
 import pygame
 import pygame_gui
 from modules.childWidget import ChildWidget
-from time import monotonic
 import logging
 from modules.mxmlParser import get_parts_info
+import time
 from time import sleep
+
+# () -> float; OS monotonic clock with time.time fallback; reassign for tests.
+monotonic_now = getattr(time, "monotonic", time.time)
 
 _VISIBLE_44_SINGLE = {19, 21, 23, 25, 27}
 _VISIBLE_58_DOUBLE = {19, 21, 23, 25, 27, 31, 33, 35, 37, 39}
@@ -47,6 +50,13 @@ _SWING_RATIOS: dict[str, float] = {
     "Hard (3:1)":    3.0,
 }
 _SWING_DEFAULT = "Shuffle (2:1)"
+_PLAYBACK_REFERENCE_BPM = 120.0
+
+# Chord events only: `make_accidentals` treats tuple `note_x` as a-left-of-head anchor
+# and adds +note_width/2 internally. Live MIDI whole notes already use a left-ish x;
+# MusicXML chord notes use horizontal positions that match stemmed notehead *centers*,
+# so we shift tuple refs left by half a nominal width before accidental layout.
+_MUSICXML_ACCIDENTAL_ANCHOR_OFFSET = 0.5
 
 class StaffWidget(ChildWidget):
 
@@ -72,12 +82,12 @@ class StaffWidget(ChildWidget):
 
 		def set_position(self, seconds):
 			if self.running():
-				self.end_time = monotonic() + float(seconds) / self.time_scale
+				self.end_time = monotonic_now() + float(seconds) / self.time_scale
 			else:
 				self._paused_remaining = float(seconds)
 		
 		def start(self):
-			self.end_time = monotonic() + self.duration / self.time_scale
+			self.end_time = monotonic_now() + self.duration / self.time_scale
 			self._paused_remaining = None
 
 		def restart(self, staff_widget):
@@ -95,13 +105,14 @@ class StaffWidget(ChildWidget):
 
 		def resume(self):
 			if self._paused_remaining is not None:
-				self.end_time = monotonic() + self._paused_remaining / self.time_scale
+				self.end_time = monotonic_now() + self._paused_remaining / self.time_scale
 				self._paused_remaining = None
 
 		def skip(self, seconds):
 			if self.running():
 				# Compute remaining time first
-				remaining = self.end_time - self.now()
+				now = monotonic_now()
+				remaining = self.end_time - now
 
 				# Apply skip
 				remaining -= seconds
@@ -110,7 +121,7 @@ class StaffWidget(ChildWidget):
 				remaining = max(0, min(self.duration, remaining))
 
 				# Rebuild end_time from clamped remaining
-				self.end_time = self.now() + remaining
+				self.end_time = monotonic_now() + remaining
 
 			elif self._paused_remaining is not None:
 				new_time = self._paused_remaining - seconds
@@ -124,7 +135,7 @@ class StaffWidget(ChildWidget):
 			if self.running():
 				remaining = self.remaining()
 				self.time_scale = float(scale)
-				self.end_time = monotonic() + remaining / self.time_scale
+				self.end_time = monotonic_now() + remaining / self.time_scale
 			else:
 				self.time_scale = float(scale)
 
@@ -132,7 +143,7 @@ class StaffWidget(ChildWidget):
 			if not self.running():
 				return
 			if now is None:
-				now = monotonic()
+				now = monotonic_now()
 			if now >= self.end_time:
 				self.end_time = None
 				self.on_finish()
@@ -140,7 +151,7 @@ class StaffWidget(ChildWidget):
 		def remaining(self, now: float | None = None):
 			if self.running():
 				if now is None:
-					now = monotonic()
+					now = monotonic_now()
 				return max(0.0, (self.end_time - now) * self.time_scale)
 			elif self._paused_remaining is not None:
 				return self._paused_remaining
@@ -277,9 +288,25 @@ class StaffWidget(ChildWidget):
 	def bpm(self) -> float:
 		return self._bpm
 
+	def _playback_time_scale(self) -> float:
+		return max(0.01, min(64.0, self._bpm / _PLAYBACK_REFERENCE_BPM))
+
+	def _parse_voice_filter_kwargs(self) -> dict:
+		"""Pass voice selection as voice/allowed_voices kwargs."""
+		pinfo = next((p for p in self._parts_info if p["index"] == self._part_index), None)
+		available = list((pinfo or {}).get("voices") or [])
+		if len(available) <= 1:
+			return {"voice": self._voice, "allowed_voices": None}
+		sel = set(self._selected_voices)
+		if not sel or sel == set(available):
+			return {"voice": None, "allowed_voices": None}
+		return {"voice": None, "allowed_voices": frozenset(sel)}
+
 	@bpm.setter
 	def bpm(self, value: float):
 		self._bpm = float(value)
+		if self.staff_timer:
+			self.staff_timer.set_scale(self._playback_time_scale())
 		if self.dumb_staffEvent:
 			print("resetting pt map")
 			self._build_pt_map()
@@ -312,7 +339,7 @@ class StaffWidget(ChildWidget):
 	
 	def precompute_sizes(self):
 		self._line_ys = self._compute_line_ys()
-		self.note_height = (self._line_ys[1] - self._line_ys[0])*2.1
+		self.note_height = (self._line_ys[1] - self._line_ys[0])*1.5
 		self.note_width  = self.note_height * 1.3
 		self.default_note_position = self.canvas_width // (
 			self.injected_note_staff_division or 7.5
@@ -346,11 +373,12 @@ class StaffWidget(ChildWidget):
 	def scrollingStaffSetup(self):
 		total_scroll_width = self.canvas_width
 		shapes_by_chunk: dict[int, list] = {}
-
+		cleffIndexList=[]
+		restIndexList=[]
+		barIndexList=[]
 		if self.dumb_staffEvent:
-			total_scroll_width = self.staffEvent[1] * self.layout_pps + self.canvas_width
-
-			for event in self.dumb_staffEvent:
+			total_scroll_width = self.staffEvent[1] * self.layout_pps + self.canvas_widt
+			for index,event in enumerate(self.dumb_staffEvent):
 				start = event.get("start_sec")
 				if start is None:
 					continue
@@ -370,6 +398,7 @@ class StaffWidget(ChildWidget):
 				
 				event_type = event.get("type")
 				if event_type == "bar":
+					barIndexList.append(index)
 					for shape_tuple in event['shapes']:
 						shapes_list, _ = shape_tuple
 						for shape in shapes_list:
@@ -393,6 +422,7 @@ class StaffWidget(ChildWidget):
 						shapes_by_chunk[chunk_idx + 1].extend(event['flat_shapes'])
 
 				elif event_type == "clef":
+					cleffIndexList.append(index)
 					# Clef shapes were created with x = default_note_position - note_width*4.
 					# We shift them by (start_sec * layout_pps) to place them just before
 					# the measure they belong to, the same way bar lines are handled.
@@ -654,7 +684,6 @@ class StaffWidget(ChildWidget):
 				if self.staffEvent:
 					self.dumb_staffEvent = self.create_dumb_events(self.staffEvent[0])
 					self._build_pt_map()
-					self.staff_timer.play()
 				self.scrollingStaffSetup()
 				self._build_debug_overlay()
 
@@ -938,6 +967,22 @@ class StaffWidget(ChildWidget):
 
 		return return_list
 
+	def _musicxml_shift_accidental_refs(self, accidentals_list: dict) -> dict:
+		if not accidentals_list:
+			return accidentals_list
+		dx = -self.note_width * _MUSICXML_ACCIDENTAL_ANCHOR_OFFSET
+		out: dict = {}
+		for staff_deg, row in accidentals_list.items():
+			new_row = []
+			for entry in row:
+				if isinstance(entry, tuple):
+					ch, note_x = entry
+					new_row.append((ch, note_x + dx))
+				else:
+					new_row.append(entry)
+			out[staff_deg] = new_row
+		return out
+
 
 	def accidental_type(self, note, always_accidental=False):
 		if always_accidental:
@@ -1205,7 +1250,9 @@ class StaffWidget(ChildWidget):
 							)
 						note_shapes_list.append(note_shapes)
 
-				make_accidentals_result = self.make_accidentals(accidentals_list)
+				make_accidentals_result = self.make_accidentals(
+					self._musicxml_shift_accidental_refs(accidentals_list)
+				)
 
 				flat  = [s for nw in note_shapes_list for ni in nw for s in ni[:-1]]
 				flat += [s for acc in make_accidentals_result for s in acc[0]]
@@ -1306,6 +1353,15 @@ class StaffWidget(ChildWidget):
 					clef_y_idx = min(len(self._line_ys) - 1, anchor_idx + 4)
 				clef_y = self.line_y(clef_y_idx)
 
+				lys = self._line_ys
+				ci = clef_y_idx
+				if ci + 2 < len(lys):
+					staff_space_px = abs(lys[ci + 2] - lys[ci])
+				elif ci >= 2:
+					staff_space_px = abs(lys[ci] - lys[ci - 2])
+				else:
+					staff_space_px = abs(lys[1] - lys[0]) if len(lys) > 1 else 12.0
+
 				clef_shapes = pygame_shape_constructor(
 					shape_x     = clef_x,
 					shape_y     = clef_y,
@@ -1313,6 +1369,7 @@ class StaffWidget(ChildWidget):
 					shape_height = clef_h,
 					type         = shape_type,
 					clef_scale   = clef_scale,
+					staff_space_px = staff_space_px,
 				)
 				if clef_shapes is None:
 					continue
@@ -1528,25 +1585,40 @@ class StaffWidget(ChildWidget):
 			for shape in shapes:
 				shape.draw(canvas)
 
+	def _scroll_blit_x(self) -> int:
+		"""Pixel-aligned horizontal scroll for blitting and overlays (float noise stays in _scroll_x)."""
+		return int(round(self._scroll_x))
 
 	def draw(self):
 		if self._canvas is None or self._canvas_rect is None:
 			return
 
-		if hasattr(self, '_scroll_chunks') and self._scroll_chunks:
-			sx = round(self._scroll_x)
-			for ci, chunk in enumerate(self._scroll_chunks):
-				screen_x = sx + ci * _MAX_CHUNK_W
-				if screen_x + chunk.get_width() < 0:
-					continue   # fully off the left edge
-				if screen_x > self.canvas_width:
-					break      # fully off the right edge
-				self.screen.blit(chunk, (self._canvas_rect.x + screen_x, self._canvas_rect.y))
-		elif self.scrollingCanvas is not None:
-			self.screen.blit(
-				self.scrollingCanvas,
-				(self._canvas_rect.x + self._scroll_x, self._canvas_rect.y)
-			)
+		px = self._scroll_blit_x()
+		base_screen_x = self._canvas_rect.x + px
+
+		# Chunks use absolute screen x; cull against widget rect (not 0..canvas_width),
+		# and clip so nothing draws outside the staff area (fixes side bleed / edge pops).
+		clip_prev = self.screen.get_clip()
+		self.screen.set_clip(self._canvas_rect)
+		try:
+			if hasattr(self, '_scroll_chunks') and self._scroll_chunks:
+				left = self._canvas_rect.left
+				right = self._canvas_rect.right
+				for ci, chunk in enumerate(self._scroll_chunks):
+					screen_x = base_screen_x + ci * _MAX_CHUNK_W
+					cw = chunk.get_width()
+					if screen_x + cw <= left:
+						continue
+					if screen_x >= right:
+						break
+					self.screen.blit(chunk, (screen_x, self._canvas_rect.y))
+			elif self.scrollingCanvas is not None:
+				self.screen.blit(
+					self.scrollingCanvas,
+					(base_screen_x, self._canvas_rect.y)
+				)
+		finally:
+			self.screen.set_clip(clip_prev)
 
 		self.screen.blit(self._press_canvas, self._canvas_rect.topleft)
 		self.screen.blit(self._canvas, self._canvas_rect.topleft)
@@ -1579,9 +1651,13 @@ class StaffWidget(ChildWidget):
 		"""Re-parse the current file with the updated part / voice selection."""
 		from modules.mxmlParser import parse_musicxml_chords, get_parts_info
 		self.staffEvent = parse_musicxml_chords(
-			self.xmlFilePath, part_index=self._part_index, voice=self._voice
+			self.xmlFilePath,
+			part_index=self._part_index,
+			**self._parse_voice_filter_kwargs(),
 		)
-		self.staff_timer = self.Timer(self.staffEvent[1])
+		self.staff_timer = self.Timer(
+			self.staffEvent[1], scale=self._playback_time_scale()
+		)
 		self.dumb_staffEvent = None
 		self.snap_index      = 0
 		self._reset_pt_state()
@@ -1686,14 +1762,17 @@ class StaffWidget(ChildWidget):
 				self.manager.current.rebuild_sidebar()
 
 
-			infos = [f"{i['index']}: {i['name']}" for i in get_parts_info(self.xmlFilePath)]
+			infos = [f"{i['index']}: {i['name']}" for i in self._parts_info]
+			part_defaults = [
+				info["index"] in self._selected_part_indices for info in self._parts_info
+			]
 
 			options.append(
 				{
 				"type": "checkbox_list",
 				"label": "Score Voice",
 				"options": infos,
-				"default": [True],
+				"default": part_defaults,
 				"on_change": changeScoreVoice
 				}
 			)
@@ -1708,9 +1787,8 @@ class StaffWidget(ChildWidget):
 				def changeVoice(states: dict, self=self, available_voices=available_voices):
 					selected_vs = [v for v in available_voices if states.get(str(v), False)]
 					if selected_vs:
-						# Always follow the smallest selected voice number
-						self._voice = min(selected_vs)
-						self._selected_voices = selected_vs
+						self._selected_voices = sorted(selected_vs)
+						self._voice = self._selected_voices[0] if len(self._selected_voices) == 1 else None
 					else:
 						# Nothing checked → show all voices
 						self._voice = None
@@ -1719,11 +1797,8 @@ class StaffWidget(ChildWidget):
 						self.reParseXml()
 					self.manager.current.rebuild_sidebar()
 
-				# Pre-tick whichever voice is currently active so the checkbox
-				# reflects the live state after a re-parse / part change.
 				voice_labels   = [str(v) for v in available_voices]
-				active_voice   = self._voice if self._voice in available_voices else available_voices[0]
-				voice_defaults = [v == active_voice for v in available_voices]
+				voice_defaults = [v in self._selected_voices for v in available_voices]
 
 				options.append({
 					"type":      "checkbox_list",
@@ -1764,16 +1839,39 @@ class StaffWidget(ChildWidget):
 		})
 
 
-		if self.noteMatchMode!=3:
-			if self.noteMatchMode!=1:#proper
-				pass	
-				#speed
+		if self.noteMatchMode != 3:
 
-			else:
-			
-				#bpm
+			def _submit_bpm(text: str, self=self):
+				try:
+					v = float(str(text).strip().replace(",", "."))
+				except ValueError:
+					return
+				self.bpm = max(1.0, min(480.0, v))
+				self.refreshPass = True
 
+			options.append({
+				"type":      "text_entry",
+				"label":     "BPM (playback tempo; spacing unchanged)",
+				"default":   str(int(round(self.bpm))),
+				"on_submit": _submit_bpm,
+			})
 
+			def _submit_note_spacing(text: str, self=self):
+				try:
+					v = float(str(text).strip().replace(",", "."))
+				except ValueError:
+					return
+				self.note_spacing_scale = max(0.01, min(200.0, v))
+				self.refreshPass = True
+
+			options.append({
+				"type":      "text_entry",
+				"label":     "Note spacing multiplier",
+				"default":   f"{self.note_spacing_scale:g}",
+				"on_submit": _submit_note_spacing,
+			})
+
+			if self.noteMatchMode == 1:
 
 				# ── Swing ratio dropdown ──────────────────────────────────────────────
 				ratio_labels = list(_SWING_RATIOS.keys())
@@ -1822,13 +1920,19 @@ class StaffWidget(ChildWidget):
 		self._file_dialog = None
 
 	def _load_xml(self, path):
-		from modules.mxmlParser import parse_musicxml_chords
-		self.staffEvent = parse_musicxml_chords(path, part_index=self._part_index, voice=self._voice)
-		self.staff_timer = self.Timer(self.staffEvent[1])
+		from modules.mxmlParser import parse_musicxml_chords, get_parts_info
+		self._parts_info = get_parts_info(path)
+		self.staffEvent = parse_musicxml_chords(
+			path,
+			part_index=self._part_index,
+			**self._parse_voice_filter_kwargs(),
+		)
+		self.staff_timer = self.Timer(
+			self.staffEvent[1], scale=self._playback_time_scale()
+		)
 		self.dumb_staffEvent = None
 		self.snap_index = 0
 		self._reset_pt_state()
-		self._parts_info = get_parts_info(path)
 		self._selected_part_indices = [self._part_index]  # track initial selection
 		if self.noteMatchMode != 2:
 			self.mutate_group(self.staffElementGroup, "addMediaBar")
@@ -2039,7 +2143,7 @@ class StaffWidget(ChildWidget):
 		if not self.dumb_staffEvent:
 			return
 
-		sx = round(self._scroll_x)
+		sx = self._scroll_blit_x()
 
 		for event in self.dumb_staffEvent[self.overlayEventIndex:]:
 			if event.get('type') != 'chord':
@@ -2061,10 +2165,10 @@ class StaffWidget(ChildWidget):
 					event["sound_played"] = False
 				continue
 			
-			if not event.get("sound_played",False):
+			if self.staff_timer.running() and not event.get("sound_played", False):
 				for i in event.get("pitch_list"):
 					self.manager.midiAudioPlayer.note_on(i)
-				event["sound_played"]=True
+				event["sound_played"] = True
 
 			for shape in event.get('flat_shapes', []):
 				shape.shift_x(sx)
@@ -2088,7 +2192,7 @@ class StaffWidget(ChildWidget):
 		if not self.dumb_staffEvent:
 			return
 
-		sx = round(self._scroll_x)
+		sx = self._scroll_blit_x()
 
 		for event in self.dumb_staffEvent[self.overlayEventIndex:]:
 			if event.get("type") != "chord":
@@ -2111,10 +2215,10 @@ class StaffWidget(ChildWidget):
 					event["sound_played"] = False
 				continue
 			
-			if not event.get("sound_played",False):
+			if self.staff_timer.running() and not event.get("sound_played", False):
 				for i in event.get("pitch_list"):
 					self.manager.midiAudioPlayer.note_on(i)
-				event["sound_played"]=True
+				event["sound_played"] = True
 
 			for shape in event.get("flat_shapes", []):
 				shape.shift_x(sx)
@@ -2134,25 +2238,25 @@ class StaffWidget(ChildWidget):
 			return
 
 		if not (self.staff_timer and self.staff_timer.running()):
-			if self.noteMatchMode != 2 or self.refreshPass==True:
+			if not self.staff_timer or not self.dumb_staffEvent:
 				self.processUserEvents(midi_notes, changedMidi, trueTime=None)
 				self.clear()
 				self.draw_shapes(self.user_note_shapes, self._canvas)
+				self.refreshPass = False
 				return
 
 		self.clear()
 
+		frame_now = monotonic_now()
 		temp_shape_list = []
 		match self.noteMatchMode:
 			case 0:
 				events_to_spawn = []
-				#now = monotonic()
-				#countdown_time = max(0.0, (self.staff_timer.end_time - now) * self.staff_timer.time_scale)
-				#trueTime = self.staffEvent[1] - countdown_time
-				trueTime = round((self.staffEvent[1] - self.staff_timer.remaining()),4)
+				trueTime = self.staffEvent[1] - self.staff_timer.remaining(frame_now)
 				target_x = -(trueTime * self.layout_pps)
-				smoothing = 2
-				self._scroll_x += (target_x - self._scroll_x)
+				# Lock scroll to timer (running or paused). Smoothing toward target caused drift
+				# while paused and uneven pixel steps during play; sub-pixel noise is handled in draw().
+				self._scroll_x = target_x
 
 				# Advance the index past anything scrolled off the left edge
 				while (
@@ -2166,9 +2270,10 @@ class StaffWidget(ChildWidget):
 
 			case 1:  # Proper Staff Time — variable-speed scroll driven by BPM + fractions
 				if not self._pt_map:
+					self.refreshPass = False
 					return
 
-				trueTime = round((self.staffEvent[1] - self.staff_timer.remaining()),4)
+				trueTime = round((self.staffEvent[1] - self.staff_timer.remaining(frame_now)), 4)
 
 				self._pt_elapsed = trueTime
 
@@ -2206,7 +2311,8 @@ class StaffWidget(ChildWidget):
 				events_to_spawn = []
 
 				if not self.dumb_staffEvent:
-					return []
+					self.refreshPass = False
+					return
 
 				if midi_notes or self.refreshPass:
 					noteCount = sum(1 for v in midi_notes if v != 0)
@@ -2234,7 +2340,9 @@ class StaffWidget(ChildWidget):
 
 						if self.snap_index >= len(self.dumb_staffEvent):
 							self.processUserEvents(midi_notes, changedMidi, trueTime=None)
-							return self.cachedShapes
+							self.refreshPass = False
+							self.draw_shapes(self.user_note_shapes, self._canvas)
+							return
 
 						newNoteTime = self.dumb_staffEvent[self.snap_index]["start_sec"]
 
@@ -2243,8 +2351,7 @@ class StaffWidget(ChildWidget):
 						self._scroll_x = -(newNoteTime * self.layout_pps)
 						self.logger.debug(f"[scroll x]: {self._scroll_x}")
 
-						now = monotonic()
-						countdown_time = self.staff_timer.remaining()
+						countdown_time = self.staff_timer.remaining(frame_now)
 						trueTime = self.staffEvent[1] - countdown_time
 						self.processUserEvents(midi_notes, changedMidi, trueTime=trueTime)
 					
@@ -2256,22 +2363,19 @@ class StaffWidget(ChildWidget):
 						self._scroll_x = -(newNoteTime * self.layout_pps)
 						self.logger.debug(f"[scroll x]: {self._scroll_x}")
 
-						now = monotonic()
-						countdown_time = self.staff_timer.remaining()
+						countdown_time = self.staff_timer.remaining(frame_now)
 						trueTime = self.staffEvent[1] - countdown_time
 						self.processUserEvents(midi_notes, changedMidi, trueTime=trueTime)
 
 					else:
-						now = monotonic()
-						countdown_time = max(0.0, (self.staff_timer.end_time - now) * self.staff_timer.time_scale)
+						countdown_time = self.staff_timer.remaining(frame_now)
 						trueTime = self.staffEvent[1] - countdown_time
 						self.processUserEvents(midi_notes, changedMidi, trueTime=trueTime)
 
 				else:
 					self._prev_note_count = 0
 					self._chord_was_shrinking = False
-					now = monotonic()
-					countdown_time = max(0.0, (self.staff_timer.end_time - now) * self.staff_timer.time_scale)
+					countdown_time = self.staff_timer.remaining(frame_now)
 					trueTime = self.staffEvent[1] - countdown_time
 					self.processUserEvents(midi_notes, changedMidi, trueTime=trueTime)
 
@@ -2279,12 +2383,10 @@ class StaffWidget(ChildWidget):
 
 			case 3:  # None
 				events_to_spawn = []
-				now = monotonic()
-				countdown_time = max(0.0, (self.staff_timer.end_time - now) * self.staff_timer.time_scale)
+				countdown_time = self.staff_timer.remaining(frame_now)
 				trueTime = self.staffEvent[1] - countdown_time
 				target_x = -(trueTime * self.layout_pps)
-				smoothing = 2
-				self._scroll_x += (target_x - self._scroll_x) * min(1.0, smoothing * deltaTime)
+				self._scroll_x = target_x
 				self.processUserEvents(midi_notes, changedMidi, trueTime=trueTime)
 
 		for event in events_to_spawn:
