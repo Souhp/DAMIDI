@@ -1,4 +1,5 @@
 import os
+import time
 import pygame
 import pygame_gui
 from sceneManager import SceneManager
@@ -33,6 +34,14 @@ def main():
 	manager   = SceneManager(screen, ui_manager,pages_dir=pages_dir,start_async_loop=True)	 # optional: only if you use run_task()
 	manager.push("menu")
 
+	# Debounce expensive scene/widget rebuilds during live resize.
+	# pygame may emit WINDOWRESIZED repeatedly while the user drags the edge.
+	debounce_s = 0.2
+	resize_pending = False
+	pending_w = 0
+	pending_h = 0
+	last_resize_at = 0.0
+
 	running = True
 	while running:
 		dt = clock.tick(60) / 1000.0
@@ -43,9 +52,17 @@ def main():
 			elif event.type == pygame.WINDOWRESIZED:
 				w, h = screen.get_size()
 				ui_manager.set_window_resolution((w, h))
-				manager.resize(w, h)
+				# Keep resolution tracking immediate, but postpone full rebuild.
+				pending_w, pending_h = w, h
+				last_resize_at = time.monotonic()
+				resize_pending = True
 			ui_manager.process_events(event)
 			manager.handle_event(event)
+
+		# Flush exactly once after resizing stops for `debounce_s`.
+		if resize_pending and (time.monotonic() - last_resize_at) >= debounce_s:
+			manager.resize(pending_w, pending_h)
+			resize_pending = False
 
 		ui_manager.update(dt)
 		manager.update(dt)

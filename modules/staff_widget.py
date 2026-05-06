@@ -10,7 +10,7 @@ A ChildWidget that owns a pygame.Surface canvas for drawing music notation.
 import logging
 import bisect
 from fractions import Fraction
-from modules.pygame_note_shapes import pygame_shape_constructor
+from modules.pygame_note_shapes import pygame_shape_constructor, shape_group_bbox
 import pygame
 import pygame_gui
 from modules.childWidget import ChildWidget
@@ -220,7 +220,8 @@ class StaffWidget(ChildWidget):
 		# Increase to spread notes further apart without changing how fast they scroll.
 		# layout_pps = pixels_per_second * note_spacing_scale is used everywhere
 		# notes are placed or measured, so the two stay in sync automatically.
-		self.note_spacing_scale = 12.0
+		self._note_spacing_scale = 12.0
+		self._staff_scale = 1.0
 		self.press_window_sec	= 0.05
 		self.current_allowed_pressed_midi = {}
 		self.staff_timer = None
@@ -244,6 +245,7 @@ class StaffWidget(ChildWidget):
 		self._swing_enabled     = False
 		self._swing_ratio_label = _SWING_DEFAULT
 		self._swing_ratio       = _SWING_RATIOS[_SWING_DEFAULT]
+		self._show_debug_note_bboxes = False
 		
 
 		# ── part / voice state ─────────────────────────────────────────────────
@@ -282,6 +284,46 @@ class StaffWidget(ChildWidget):
 	def layout_pps(self) -> float:
 		"""Pixels per music-second for note layout AND scroll offset."""
 		return self.pixels_per_second * self.note_spacing_scale
+
+	@property
+	def note_spacing_scale(self) -> float:
+		return self._note_spacing_scale
+
+	@note_spacing_scale.setter
+	def note_spacing_scale(self, value: float):
+		clamped = max(0.01, min(200.0, float(value)))
+		if abs(self._note_spacing_scale - clamped) < 1e-9:
+			return
+		self._note_spacing_scale = clamped
+		if self.dumb_staffEvent:
+			mode = (
+				"addMediaBar"
+				if self.staffEvent and self.noteMatchMode != 2
+				else "removeMediaBar"
+			)
+			self.buildCanvasElements(mode)
+			self._reset_pt_state()
+		self.refreshPass = True
+
+	@property
+	def staff_scale(self) -> float:
+		return self._staff_scale
+
+	@staff_scale.setter
+	def staff_scale(self, value: float):
+		clamped = max(0.4, min(3.0, float(value)))
+		if abs(self._staff_scale - clamped) < 1e-9:
+			return
+		self._staff_scale = clamped
+		if self.dumb_staffEvent:
+			mode = (
+				"addMediaBar"
+				if self.staffEvent and self.noteMatchMode != 2
+				else "removeMediaBar"
+			)
+			self.buildCanvasElements(mode)
+			self._reset_pt_state()
+		self.refreshPass = True
 
 	# ── bpm property ──────────────────────────────────────────────────────────
 	@property
@@ -332,9 +374,12 @@ class StaffWidget(ChildWidget):
 
 	def _compute_line_ys(self) -> list[float]:
 		n	 = self.numIndexes
-		pad  = self.canvas_height * 0.1
-		step = (self.canvas_height - pad * 2) / (n - 1)
-		return [pad + i * step for i in range(n)]
+		pad = self.canvas_height * 0.1
+		base_step = (self.canvas_height - pad * 2) / (n - 1)
+		step = base_step * self.staff_scale
+		center_y = self.canvas_height * 0.5
+		start_y = center_y - (step * (n - 1) * 0.5)
+		return [start_y + i * step for i in range(n)]
 
 	
 	def precompute_sizes(self):
@@ -349,6 +394,15 @@ class StaffWidget(ChildWidget):
 			)
 
 		self.hit_time_offset = (self.canvas_width - self.default_note_position) / self.layout_pps
+
+
+		
+	def _update_canvas(self):
+		if self.noteMatchMode != 2:
+			self.mutate_group(self.staffElementGroup, "addMediaBar")
+		else:
+			self.mutate_group(self.staffElementGroup, "removeMediaBar")
+
 
 	def overlayStaffSetup(self):
 		if self._canvas is not None:
@@ -377,7 +431,7 @@ class StaffWidget(ChildWidget):
 		restIndexList=[]
 		barIndexList=[]
 		if self.dumb_staffEvent:
-			total_scroll_width = self.staffEvent[1] * self.layout_pps + self.canvas_widt
+			total_scroll_width = self.staffEvent[1] * self.layout_pps + self.canvas_width
 			for index,event in enumerate(self.dumb_staffEvent):
 				start = event.get("start_sec")
 				if start is None:
@@ -431,8 +485,10 @@ class StaffWidget(ChildWidget):
 						shape.shift_x(shift + in_bar_nudge)
 					# Recalculate canvas_x for the clef — it starts left of the note column.
 					clef_canvas_x = round(
-						(self.default_note_position - self.note_width * 6) + shift + in_bar_nudge
+						(self.default_note_position - self.note_width * 4) + shift + in_bar_nudge
 					)
+					event["x_position"] = clef_canvas_x
+					event["current_x"] = clef_canvas_x
 					clef_chunk_idx = int(max(0, clef_canvas_x) // _MAX_CHUNK_W)
 					shapes_by_chunk.setdefault(clef_chunk_idx, [])
 					shapes_by_chunk[clef_chunk_idx].extend(event['flat_shapes'])
@@ -444,83 +500,117 @@ class StaffWidget(ChildWidget):
 						shapes_by_chunk.setdefault(clef_chunk_idx + 1, [])
 						shapes_by_chunk[clef_chunk_idx + 1].extend(event['flat_shapes'])
 
-			# ── Post-pass: nudge rests that overlap an incoming clef glyph ────────
-			#
-			# Clef shapes were created at (default_note_position - note_width*6)
-			# and shifted by (shift + in_bar_nudge) in the loop above.
-			# Rests land at default_note_position + shift.
-			# When they share a start_sec the clef right edge overlaps the rest,
-			# so we push the rest left until it clears the glyph.
-			_CLEF_GLYPH_W = 6    # glyph spans ~6 note-widths from its anchor
-			_NUDGE_MARGIN = 0.5  # extra breathing room (in note-widths)
+			# ── Post-pass collision hierarchy ──────────────────────────────────────
+			# 1) clefs move according to bars
+			# 2) rests move according to bars and then clefs
+			# (clefs never react to rests)
+			def _event_bbox(ev):
+				flat_shapes = ev.get("flat_shapes") or []
+				if flat_shapes:
+					return shape_group_bbox(flat_shapes)
 
+				if ev.get("type") == "bar":
+					bar_shapes = []
+					for shape_group in ev.get("shapes", []):
+						if isinstance(shape_group, tuple):
+							shape_list, _ = shape_group
+							bar_shapes.extend(shape_list)
+					if bar_shapes:
+						return shape_group_bbox(bar_shapes)
+				return None
+
+			def _nudge_event_left(
+				target_ev,
+				obstacle_ev,
+				margin_scale=0.5,
+				min_left_gap_scale=0.5,
+			):
+				target_bbox = _event_bbox(target_ev)
+				obstacle_bbox = _event_bbox(obstacle_ev)
+				target_x = target_ev.get("x_position")
+				if target_bbox is None or obstacle_bbox is None or target_x is None:
+					return False
+
+				if not (
+					target_bbox["left"] < obstacle_bbox["right"]
+					and target_bbox["right"] > obstacle_bbox["left"]
+				):
+					return False
+
+				nudge_px = obstacle_bbox["right"] - target_bbox["left"] + self.note_width * margin_scale
+
+				left_neighbour_right = 0.0
+				for ev in self.dumb_staffEvent:
+					if ev is target_ev:
+						continue
+					ev_x = ev.get("x_position")
+					if ev_x is None or ev_x > target_x:
+						continue
+					ev_bbox = _event_bbox(ev)
+					if ev_bbox is None:
+						continue
+					ev_right = ev_bbox["right"]
+					if ev_right <= target_x and ev_right > left_neighbour_right:
+						left_neighbour_right = ev_right
+
+				# Minimum preserved space to the nearest left neighbor.
+				# Lower values allow tighter packing before we stop nudging.
+				_LEFT_GAP = self.note_width * min_left_gap_scale
+				available_px = target_x - left_neighbour_right - _LEFT_GAP
+				if available_px <= 0:
+					return False
+
+				nudge_px = min(nudge_px, available_px)
+				if nudge_px <= 0:
+					return False
+
+				for shape in target_ev.get("flat_shapes", []):
+					shape.shift_x(-nudge_px)
+				target_ev["x_position"] -= nudge_px
+
+				old_chunk = int(max(0, target_x) // _MAX_CHUNK_W)
+				new_chunk = int(max(0, target_ev["x_position"]) // _MAX_CHUNK_W)
+				if new_chunk < old_chunk:
+					shapes_by_chunk.setdefault(new_chunk, [])
+					shapes_by_chunk[new_chunk].extend(target_ev.get("flat_shapes", []))
+				return True
+
+			# 1) Clefs move only because of bars.
 			for clef_ev in self.dumb_staffEvent:
 				if clef_ev.get("type") != "clef":
 					continue
-				cleff_sec = clef_ev.get("start_sec",0.0)
-				
-				#skip first clefs
-				if cleff_sec<=0.0:
+				if float(clef_ev.get("start_sec", 0.0) or 0.0) <= 0.0:
+					# Keep initial clef position unchanged.
 					continue
-
-				clef_shift   = (clef_ev.get("start_sec") or 0.0) * self.layout_pps
-				in_bar_nudge = self.note_width * 2
-				clef_left    = (
-					self.default_note_position
-					- self.note_width * _CLEF_GLYPH_W
-					+ clef_shift
-					+ in_bar_nudge
-				)
-				clef_right = clef_left + self.note_width * _CLEF_GLYPH_W
-
-				for rest_ev in self.dumb_staffEvent:
-					if rest_ev.get("type") != "rest":
+				for bar_ev in self.dumb_staffEvent:
+					if bar_ev.get("type") != "bar":
 						continue
-					rest_x = rest_ev.get("x_position")
-					if rest_x is None:
+					_nudge_event_left(clef_ev, bar_ev, margin_scale=0.35)
+
+			# 2) Rests move because of bars and clefs.
+			for rest_ev in self.dumb_staffEvent:
+				if rest_ev.get("type") != "rest":
+					continue
+				for bar_ev in self.dumb_staffEvent:
+					if bar_ev.get("type") != "bar":
 						continue
-					rest_right = rest_x + self.note_width
-
-					# AABB overlap check
-					if rest_x < clef_right and rest_right > clef_left:
-						nudge_px = clef_right - rest_x + self.note_width * _NUDGE_MARGIN
-
-						# Find the right edge of the nearest event sitting to the
-						# left of this rest so we don't nudge it into that neighbour.
-						# A small gap (half a note-width) is kept between them.
-						left_neighbour_right = 0.0
-						for ev in self.dumb_staffEvent:
-							if ev is rest_ev:
-								continue
-							ev_x = ev.get("x_position")
-							if ev_x is None:
-								continue
-							ev_right = ev_x + self.note_width
-							if ev_right <= rest_x and ev_right > left_neighbour_right:
-								left_neighbour_right = ev_right
-
-						_LEFT_GAP    = self.note_width * 0.5
-						available_px = rest_x - left_neighbour_right - _LEFT_GAP
-
-						# If there is no room at all, skip the nudge entirely —
-						# a partial clef overlap is better than cramming left.
-						if available_px <= 0:
-							continue
-
-						# Cap: only move as far left as the available space allows.
-						nudge_px = min(nudge_px, available_px)
-
-						for shape in rest_ev["flat_shapes"]:
-							shape.shift_x(-nudge_px)
-						rest_ev["x_position"] -= nudge_px
-
-						# If the nudge crosses a chunk boundary, register the
-						# shapes in the earlier chunk so they still get drawn.
-						old_chunk = int(max(0, rest_x) // _MAX_CHUNK_W)
-						new_chunk = int(max(0, rest_ev["x_position"]) // _MAX_CHUNK_W)
-						if new_chunk < old_chunk:
-							shapes_by_chunk.setdefault(new_chunk, [])
-							shapes_by_chunk[new_chunk].extend(rest_ev["flat_shapes"])
+					_nudge_event_left(
+						rest_ev,
+						bar_ev,
+						margin_scale=0.5,
+						min_left_gap_scale=0.2,
+					)
+				for clef_ev in self.dumb_staffEvent:
+					if clef_ev.get("type") != "clef":
+						continue
+					if float(clef_ev.get("start_sec", 0.0) or 0.0) <= 0.0:
+						continue
+					_nudge_event_left(
+						rest_ev,
+						clef_ev,
+						margin_scale=0.5,
+						min_left_gap_scale=0.2,
+					)
 
 		num_chunks = max(1, (int(total_scroll_width) + _MAX_CHUNK_W - 1) // _MAX_CHUNK_W)
 		self._scroll_chunks: list[pygame.Surface] = []
@@ -958,6 +1048,7 @@ class StaffWidget(ChildWidget):
 					shape_width=note_width,
 					shape_height=note_height,
 					type=accidental_char,
+					debug_bbox=self._show_debug_note_bboxes,
 				)
 
 				if accidental_shapes is None:
@@ -1076,6 +1167,7 @@ class StaffWidget(ChildWidget):
 			type=note_type,
 			paint=None,
 			dotted=dotted,
+			debug_bbox=self._show_debug_note_bboxes,
 		)
 		if note_shapes is None:
 			raise ValueError(f"shape_constructor returned None for whole note at x={x}, y={y}, width={note_width}, height={note_height}")
@@ -1187,11 +1279,12 @@ class StaffWidget(ChildWidget):
 				bar_top    = self._line_ys[0]
 				bar_bottom = self._line_ys[-1]
 				bar_shapes = pygame_shape_constructor(
-					shape_x		 = self.default_note_position + self.note_width / 2,
+					shape_x		 = self.default_note_position + self.note_width / 3,
 					shape_y		 = bar_top,
 					shape_height = bar_bottom - bar_top,
 					shape_width  = max(1, self.canvas_height // 200),
 					type		 = "bar",
+					debug_bbox=self._show_debug_note_bboxes,
 				)
 				dumb_events.append({
 					"type"	   : event_type,
@@ -1290,6 +1383,7 @@ class StaffWidget(ChildWidget):
 					shape_height = self.note_height,
 					type         = shape_type_str,
 					dotted       = dotted,
+					debug_bbox=self._show_debug_note_bboxes,
 				)
 
 				if rest_shapes is None:
@@ -1370,6 +1464,7 @@ class StaffWidget(ChildWidget):
 					type         = shape_type,
 					clef_scale   = clef_scale,
 					staff_space_px = staff_space_px,
+					debug_bbox=self._show_debug_note_bboxes,
 				)
 				if clef_shapes is None:
 					continue
@@ -1712,6 +1807,18 @@ class StaffWidget(ChildWidget):
 				"callback": self._open_file_dialog
 			}
 		)
+		def _toggle_debug_note_bboxes(self=self):
+			self._show_debug_note_bboxes = not self._show_debug_note_bboxes
+			if self.xmlFilePath:
+				self.reParseXml()
+			self.refreshPass = True
+			self.manager.current.rebuild_sidebar()
+
+		options.append({
+			"type": "button",
+			"label": f"Debug Note BBoxes: {'ON' if self._show_debug_note_bboxes else 'OFF'}",
+			"callback": _toggle_debug_note_bboxes,
+		})
 
 		#swing_label = f"Swing: {'ON ✓' if self._swing_enabled else 'OFF'}"
 	
@@ -1861,14 +1968,34 @@ class StaffWidget(ChildWidget):
 					v = float(str(text).strip().replace(",", "."))
 				except ValueError:
 					return
-				self.note_spacing_scale = max(0.01, min(200.0, v))
-				self.refreshPass = True
+
+				v = max(7, min(v,20))
+				self.note_spacing_scale = v
+				self.manager.current.rebuild_sidebar()
+
 
 			options.append({
 				"type":      "text_entry",
 				"label":     "Note spacing multiplier",
 				"default":   f"{self.note_spacing_scale:g}",
 				"on_submit": _submit_note_spacing,
+			})
+
+			def _submit_staff_scale(text: str, self=self):
+				try:
+					v = float(str(text).strip().replace(",", "."))
+				except ValueError:
+					return
+				v = max(0.4, min(v,3))
+				self.staff_scale = v
+				self.manager.current.rebuild_sidebar()
+				self._update_canvas()
+
+			options.append({
+				"type":      "text_entry",
+				"label":     "Staff size multiplier",
+				"default":   f"{self.staff_scale:g}",
+				"on_submit": _submit_staff_scale,
 			})
 
 			if self.noteMatchMode == 1:

@@ -213,8 +213,10 @@ class PygamePolygon(PygameShape):
 		self.color		  = parse_color(color) if color is not None else _BLACK
 		self.color_locked = False
 		self._is_fill_mask = False
+		self.givenShift= 0.0
 
 	def shift_x(self, dx: float):
+		self.givenShift = dx
 		self._dx += dx
 
 	def draw(self, surface):
@@ -376,6 +378,75 @@ class PygameMusicGlyph(PygameShape):
 					   - (bounds.x + bounds.width / 2))
 		blit_y = round(self.y + self._offset_y - (bounds.y + bounds.height / 2))
 		surface.blit(glyph_surf, (blit_x, blit_y))
+
+
+def _shape_bounds(shape) -> tuple[float, float, float, float] | None:
+	"""Return (left, top, right, bottom) for one shape."""
+	dx = float(getattr(shape, "_dx", 0.0))
+
+	if isinstance(shape, PygameLine):
+		x1, y1 = float(shape.x1 + dx), float(shape.y1)
+		x2, y2 = float(shape.x2 + dx), float(shape.y2)
+		return (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+
+	if isinstance(shape, PygameCircle):
+		x, y, r = float(shape.x + dx), float(shape.y), float(shape.radius)
+		return (x - r, y - r, x + r, y + r)
+
+	if isinstance(shape, PygameEllipse):
+		x, y = float(shape.x + dx), float(shape.y)
+		w, h = float(shape.width), float(shape.height)
+		return (x, y, x + w, y + h)
+
+	if isinstance(shape, (PygamePolygon, PygamePolyline)):
+		pts = getattr(shape, "_pts", None)
+		if not pts:
+			return None
+		xs = [float(px + dx) for px, _ in pts]
+		ys = [float(py) for _, py in pts]
+		return (min(xs), min(ys), max(xs), max(ys))
+
+	if isinstance(shape, PygameMusicGlyph):
+		glyph_surf = shape._glyph_surface()
+		b = glyph_surf.get_bounding_rect()
+		if b.width <= 0 or b.height <= 0:
+			return None
+		blit_x = float(shape.x + dx + shape._offset_x - (b.x + b.width / 2))
+		blit_y = float(shape.y + shape._offset_y - (b.y + b.height / 2))
+		return (blit_x, blit_y, blit_x + float(b.width), blit_y + float(b.height))
+
+	return None
+
+
+def _group_bbox(shapes: Sequence[PygameShape]) -> dict | None:
+	left = top = right = bottom = None
+	for shape in shapes:
+		b = _shape_bounds(shape)
+		if b is None:
+			continue
+		l, t, r, bt = b
+		left = l if left is None else min(left, l)
+		top = t if top is None else min(top, t)
+		right = r if right is None else max(right, r)
+		bottom = bt if bottom is None else max(bottom, bt)
+	if left is None or top is None or right is None or bottom is None:
+		return None
+	width = max(0.0, right - left)
+	height = max(0.0, bottom - top)
+	return {
+		"left": left,
+		"top": top,
+		"right": right,
+		"bottom": bottom,
+		"width": width,
+		"height": height,
+		"center": ((left + right) * 0.5, (top + bottom) * 0.5),
+	}
+
+
+def shape_group_bbox(shapes: Sequence[PygameShape]) -> dict | None:
+	"""Public helper: return the same bbox math used by debug overlays."""
+	return _group_bbox(shapes)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -896,6 +967,7 @@ def pygame_shape_constructor(
 	dotted: bool  = False,
 	clef_scale    = None,
 	staff_space_px: float | None = None,
+	debug_bbox: bool = False,
 ) -> list | None:
 	if type is None:
 		return None
@@ -1331,5 +1403,26 @@ def pygame_shape_constructor(
 			shape_x + shape_width*0.75, shape_y,
 			shape_width*0.1, color, fill=True)
 		result[0][0].append(dot)
+
+	for shape_group, _shape_type in result:
+		bbox_info = _group_bbox(shape_group)
+		if bbox_info is None:
+			continue
+
+		for shape in shape_group:
+			shape.bbox_info = bbox_info
+
+		if debug_bbox:
+			l = bbox_info["left"]
+			t = bbox_info["top"]
+			r = bbox_info["right"]
+			b = bbox_info["bottom"]
+			debug_color = (255, 0, 120, 255)
+			shape_group.extend([
+				PygameLine(l, t, r, t, debug_color, 2),
+				PygameLine(r, t, r, b, debug_color, 2),
+				PygameLine(r, b, l, b, debug_color, 2),
+				PygameLine(l, b, l, t, debug_color, 2),
+			])
 
 	return result
